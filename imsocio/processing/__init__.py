@@ -21,6 +21,11 @@ from .origami import (
     ORIGAMISettings,
     ORIGAMIDataProcessor,
     ORIGAMIVisualizer,
+    safe_float_conversion,
+    remove_duplicate_values,
+    interpolate_matrix,
+    smooth_matrix_gaussian,
+    smooth_matrix_savgol,
 )
 
 # Import ESIProt classes
@@ -174,6 +179,11 @@ __all__ = [
     'ORIGAMISettings',
     'ORIGAMIDataProcessor',
     'ORIGAMIVisualizer',
+    'safe_float_conversion',
+    'remove_duplicate_values',
+    'interpolate_matrix',
+    'smooth_matrix_gaussian',
+    'smooth_matrix_savgol',
     'DeconvolutionResult',
     'MZCalculation',
     'ESIProtCalculator',
