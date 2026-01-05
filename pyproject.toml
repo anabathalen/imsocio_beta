@@ -1,0 +1,119 @@
+[build-system]
+requires = ["setuptools>=45", "wheel", "setuptools_scm>=6.2"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "imsocio"
+version = "1.0.0"
+description = "Ion Mobility Mass Spectrometry Processing Toolkit"
+readme = "README.md"
+requires-python = ">=3.8"
+license = {text = "MIT"}
+authors = [
+    {name = "Ana Bath Alén", email = "ana.bathalen@manchester.ac.uk"},
+    {name = "Hari Newnham", email = "hari.newnham@manchester.ac.uk"},
+    {name = "Perdita Barran", email = "perdita.barran@manchester.ac.uk"}
+]
+maintainers = [
+    {name = "Ana Bath Alén", email = "ana.bathalen@manchester.ac.uk"}
+]
+keywords = [
+    "mass-spectrometry",
+    "ion-mobility",
+    "proteomics",
+    "calibration",
+    "CCS",
+    "TWIMS",
+    "collision-cross-section"
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Science/Research",
+    "Topic :: Scientific/Engineering :: Chemistry",
+    "Topic :: Scientific/Engineering :: Bio-Informatics",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Operating System :: OS Independent",
+]
+
+dependencies = [
+    "pandas>=2.0.0",
+    "numpy>=1.24.0",
+    "scipy>=1.10.0",
+    "matplotlib>=3.7.0",
+    "plotly>=5.14.0",
+    "scikit-learn>=1.3.0",
+]
+
+[project.optional-dependencies]
+app = [
+    "streamlit>=1.28.0",
+]
+dev = [
+    "pytest>=7.4.0",
+    "pytest-cov>=4.1.0",
+    "black>=23.0.0",
+    "flake8>=6.0.0",
+    "sphinx>=7.0.0",
+]
+all = [
+    "imsocio[app,dev]",
+]
+
+[project.urls]
+Homepage = "https://github.com/anabathalen/imsocio"
+Documentation = "https://github.com/anabathalen/imsocio#readme"
+Repository = "https://github.com/anabathalen/imsocio"
+"Bug Tracker" = "https://github.com/anabathalen/imsocio/issues"
+
+[project.scripts]
+imsocio-app = "streamlit_app.app:main"
+
+[tool.setuptools]
+packages = [
+    "imsocio",
+    "imsocio.calibration",
+    "imsocio.extraction",
+    "imsocio.fitting",
+    "imsocio.io",
+    "imsocio.processing",
+    "imsocio.visualization",
+    "imsocio.utils",
+    "streamlit_app",
+]
+
+[tool.setuptools.package-data]
+"imsocio" = ["*.csv"]
+"streamlit_app" = ["static/*.css"]
+"*" = ["data/*.csv"]
+
+[tool.black]
+line-length = 100
+target-version = ['py38', 'py39', 'py310', 'py311']
+include = '\.pyi?$'
+exclude = '''
+/(
+    \.eggs
+  | \.git
+  | \.hg
+  | \.mypy_cache
+  | \.tox
+  | \.venv
+  | _build
+  | buck-out
+  | build
+  | dist
+)/
+'''
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = "test_*.py"
+python_classes = "Test*"
+python_functions = "test_*"
+addopts = "-v --cov=imsocio --cov-report=html --cov-report=term"

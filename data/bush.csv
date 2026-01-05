@@ -1,0 +1,44 @@
+protein,charge,mass,CCS_he,CCS_n2
+cytochromec,13,12000,,30.8
+cytochromec,14,12000,25.2,32
+cytochromec,15,12000,26,33.3
+cytochromec,16,12000,26.7,34.5
+cytochromec,17,12000,27.4,36
+cytochromec,18,12000,28,36.7
+cytochromec,19,12000,28.7,37.9
+cytochromec,20,12000,29.2,
+myoglobin,15,17000,,40.6
+myoglobin,16,17000,,41.8
+myoglobin,17,17000,,43.1
+myoglobin,18,17000,35.2,44.4
+myoglobin,19,17000,36,45.7
+myoglobin,20,17000,36.8,47
+myoglobin,21,17000,37.5,48.2
+myoglobin,22,17000,38.2,49.2
+myoglobin,23,17000,38.7,50.1
+myoglobin,24,17000,39.2,50.9
+myoglobin,25,17000,39.6,
+myoglobin,26,17000,40,
+polyalanine5, 1, 373, 1.14, 1.81
+polyalanine6, 1, 444, 1.28, 1.95
+polyalanine7, 1, 516, 1.41, 2.11
+polyalanine8, 1,  587, 1.57, 2.28
+polyalanine9, 1,  658, 1.70, 2.43
+polyalanine10, 1, 729, 1.81, 2.57
+polyalanine11, 1, 800, 1.94, 2.71
+polyalanine12, 1, 871, 2.06, 2.82
+polyalanine13, 1, 942, 2.17, 2.94
+polyalanine14, 1, 1014, 2.28, 3.06
+ubiquitin, 7,8000,,19.1
+ubiquitin, 8,8000,,19.9
+ubiquitin, 9,8000, 16.7, 20.9
+ubiquitin, 10, 8000, 17.3, 22
+ubiquitin, 11, 8000, 18, 23.4
+ubiquitin, 12, 8000, 18.9, 24.8
+ubiquitin, 13, 8000, 19.8, 26
+BSA, 14, 66400, 40.9, 44.9
+BSA, 15, 66400, 41, 44.9
+BSA, 16, 66400, 40.6, 44.7
+BSA, 17, 66400, 40.4, 44.9
+GRGDS, 1, 490, 1.32, 2.06
+SDGRG, 1, 490, 1.3, 2.04

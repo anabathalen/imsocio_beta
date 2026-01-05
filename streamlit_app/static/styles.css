@@ -1,0 +1,305 @@
+/* --- Base --- */
+/* UPDATED: 2025-12-02 v2 */
+.stApp {
+    font-family: inherit;
+    background: #fff;
+    color: #222;
+}
+
+/* --- Colorblind-friendly palette --- */
+:root {
+    --cb-blue: #0072B2;
+    --cb-blue-bg: #eaf4fb;
+    --cb-orange: #E69F00;
+    --cb-orange-bg: #fff7e6;
+    --cb-yellow: #F0E442;
+    --cb-yellow-bg: #fffde7;
+    --cb-black: #000000;
+    --cb-grey: #999999;
+    --cb-grey-bg: #f5f5f5;
+    --cb-green: #009E73;
+    --cb-green-bg: #e6f7f2;
+    --cb-pink: #CC79A7;
+    --cb-pink-bg: #fbeaf6;
+    --cb-lightblue: #56B4E9;
+    --cb-lightblue-bg: #eaf6fb;
+    --cb-red: #D55E00;
+    --cb-red-bg: #fbeae6;
+}
+
+/* --- App Banner --- */
+.app-banner {
+    background: transparent;
+    padding: 2rem 1rem 1.2rem 1rem;
+    border: none;
+    border-radius: 0;
+    margin-bottom: 2rem;
+    color: #222;
+    text-align: center;
+    box-shadow: none;
+    font-size: 2.3rem;
+    font-weight: 700;
+    letter-spacing: 0.01em;
+}
+
+/* --- Main Header --- */
+.main-header {
+    background: var(--cb-red-bg);
+    padding: 2rem 1rem 1.2rem 1rem;
+    border-bottom: 4px solid var(--cb-red);
+    border-top: 4px solid var(--cb-red);
+    border-radius: 0;
+    margin-bottom: 2rem;
+    color: #222;
+    text-align: center;
+    box-shadow: 0 2px 8px rgba(34, 34, 59, 0.06);
+}
+
+.main-header h1 {
+    margin: 0;
+    font-size: 2.3rem;
+    font-weight: 700;
+    letter-spacing: 0.01em;
+    line-height: 2.8rem;
+}
+
+.main-header p {
+    margin: 1rem 0 0 0;
+    opacity: 0.85;
+    font-size: 1.15rem;
+    font-weight: 400;
+    line-height: 1.7rem;
+}
+
+/* --- Cards --- */
+.info-card {
+    border-radius: 0;
+    padding: 1.3rem 1rem;
+    margin: 1.5rem 0;
+    font-size: 1.05rem;
+    background: var(--cb-green-bg);
+    border-left: 4px solid var(--cb-green);
+    border-right: 4px solid var(--cb-green);
+    box-shadow: 0 2px 8px rgba(34, 34, 59, 0.06);
+
+}
+
+.success-card {
+    border-radius: 0;
+    padding: 1.3rem 1rem;
+    margin: 1.5rem 0;
+    font-size: 1.05rem;
+    background: var(--cb-green-bg);
+    border-left: 4px solid var(--cb-green);
+    border-right: 4px solid var(--cb-green);
+    border-top: 1px solid var(--cb-green);
+    border-bottom: 1px solid var(--cb-green);
+}
+
+.warning-card {
+    border-radius: 0;
+    padding: 1.3rem 1rem;
+    margin: 1.5rem 0;
+    font-size: 1.05rem;
+    background: var(--cb-orange-bg);
+    border-left: 4px solid var(--cb-orange);
+    border-right: 4px solid var(--cb-orange);
+    border-top: 1px solid var(--cb-orange);
+    border-bottom: 1px solid var(--cb-orange);
+}
+
+.error-card {
+    border-radius: 0;
+    padding: 1.3rem 1rem;
+    margin: 1.5rem 0;
+    font-size: 1.05rem;
+    background: var(--cb-red-bg);
+    border-left: 4px solid var(--cb-red);
+    border-right: 4px solid var(--cb-red);
+    border-top: 1px solid var(--cb-red);
+    border-bottom: 1px solid var(--cb-red);
+}
+
+/* --- Section Headers --- */
+.section-header {
+    color: #222;
+    font-size: 1.25rem;
+    font-weight: 600;
+    margin-bottom: 1rem;
+    border-bottom: 2px solid var(--cb-blue);
+    padding-bottom: 0.7rem;
+    letter-spacing: 0.01em;
+    line-height: 1.7rem;
+}
+
+/* --- Divider --- */
+.section-divider {
+    height: 2px;
+    background: var(--cb-grey);
+    margin: 2rem 0;
+    border: none;
+}
+
+/* --- Form Section --- */
+.form-section {
+    background: var(--cb-grey-bg);
+    padding: 1.2rem;
+    border-radius: 0;
+    border: 1px solid var(--cb-grey);
+    margin: 1rem 0;
+}
+
+/* --- Protein Card --- */
+.protein-card {
+    background: var(--cb-lightblue-bg);
+    padding: 1rem;
+    border-radius: 0;
+    border: 1px solid var(--cb-lightblue);
+    margin: 0.5rem 0;
+    box-shadow: none;
+}
+
+/* --- Metric Badge --- */
+.metric-badge {
+    background: var(--cb-yellow-bg);
+    color: #222;
+    padding: 0.3rem 0.9rem;
+    border-radius: 0;
+    font-size: 0.98rem;
+    font-weight: 500;
+    display: inline-block;
+    margin: 0.2rem;
+    letter-spacing: 0.02em;
+    border: 1px solid var(--cb-orange);
+}
+
+/* --- Button Styling --- */
+.stButton > button {
+    background: var(--cb-blue-bg);
+    color: var(--cb-blue);
+    border: 2px solid var(--cb-blue);
+    border-radius: 0;
+    padding: 0.6rem 1.5rem;
+    font-weight: 600;
+    font-size: 1.05rem;
+    transition: background 0.2s, color 0.2s;
+    box-shadow: none;
+    letter-spacing: 0.01em;
+    margin-bottom: 0.7rem;
+}
+
+.stButton > button:hover {
+    background: var(--cb-blue);
+    color: #fff;
+    border-color: var(--cb-blue);
+}
+
+/* --- Input Styling --- */
+.stTextInput > div > div > input,
+.stTextArea > div > div > textarea,
+.stSelectbox > div > div > select,
+.stNumberInput > div > div > input {
+    border-radius: 0;
+    border: 1px solid var(--cb-grey);
+    font-family: inherit;
+    padding: 0.5rem;
+    font-size: 1rem;
+    transition: border-color 0.2s;
+    margin-bottom: 0.7rem;
+    background: #fff;
+}
+
+.stTextInput > div > div > input:focus,
+.stTextArea > div > div > textarea:focus,
+.stSelectbox > div > div > select:focus,
+.stNumberInput > div > div > input:focus {
+    border-color: var(--cb-blue);
+    box-shadow: 0 0 0 2px rgba(0,114,178,0.13);
+}
+
+/* --- Expander --- */
+.streamlit-expanderHeader {
+    background: var(--cb-grey-bg);
+    border-radius: 0;
+    padding: 0.6rem;
+    font-weight: 600;
+    color: #222;
+    font-size: 1.05rem;
+    border-bottom: 2px solid var(--cb-grey);
+    border-top: 2px solid var(--cb-lightblue);
+    margin-bottom: 0.7rem;
+}
+
+/* --- Table --- */
+.stDataFrame {
+    border-radius: 0;
+    overflow: auto;
+    box-shadow: none;
+    font-size: 1rem;
+    border: 1px solid var(--cb-grey);
+    margin-bottom: 0.7rem;
+    background: #fff;
+}
+
+.stDataFrame table {
+    border-collapse: collapse;
+    width: 100%;
+    background: #fff;
+}
+
+.stDataFrame th, .stDataFrame td {
+    border: 1px solid var(--cb-grey);
+    padding: 0.5rem 0.7rem;
+    text-align: left;
+    font-size: 1rem;
+    background: #fff;
+}
+
+.stDataFrame th {
+    background: var(--cb-grey-bg);
+    font-weight: 600;
+}
+
+/* --- Progress --- */
+.progress-step {
+    display: inline-block;
+    width: 28px;
+    height: 28px;
+    border-radius: 0;
+    background: var(--cb-grey-bg);
+    color: #222;
+    text-align: center;
+    line-height: 28px;
+    margin: 0 0.5rem;
+    font-weight: 700;
+    font-size: 1rem;
+    border: 1px solid var(--cb-orange);
+}
+
+.progress-step.active {
+    background: var(--cb-blue-bg);
+    color: #222;
+    border: 1px solid var(--cb-blue);
+}
+
+.progress-step.completed {
+    background: var(--cb-green-bg);
+    color: #222;
+    border: 1px solid var(--cb-green);
+}
+
+/* --- Sidebar --- */
+.css-1d391kg {
+    background: var(--cb-pink-bg);
+    border-right: 4px solid var(--cb-pink);
+}
+
+/* --- Streamlit Sidebar (additional selectors for different versions) --- */
+[data-testid="stSidebar"] {
+    background: var(--cb-pink-bg);
+    border-right: 4px solid var(--cb-pink);
+}
+
+section[data-testid="stSidebar"] > div {
+    background: var(--cb-pink-bg);
+}
