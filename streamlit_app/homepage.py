@@ -4,6 +4,12 @@ IMSocio - Ion Mobility Mass Spectrometry Data Analysis Toolkit
 All-in-one workflow for calibrating, processing and analyzing ion mobility-mass spectrometry data.
 """
 
+import sys
+from pathlib import Path
+
+# Add parent directory to path to find imsocio package
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
 import streamlit as st
 from streamlit_app import styling
 
