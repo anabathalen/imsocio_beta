@@ -9,6 +9,12 @@ Modified drift time = dt - (EDC * sqrt(m/z) / 1000)
 where EDC = Enhanced Duty Cycle
 """
 
+import sys
+from pathlib import Path
+
+# Add parent directory to path
+sys.path.insert(0, str(Path(__file__).parent.parent.parent))
+
 import streamlit as st
 import pandas as pd
 import numpy as np

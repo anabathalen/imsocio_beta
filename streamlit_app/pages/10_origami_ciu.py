@@ -6,8 +6,8 @@ Streamlit app applying ORIGAMI ANALYZE to TWIMExtract data.
 import sys
 from pathlib import Path
 
-# Add parent directory to path to import myutils
-sys.path.insert(0, str(Path(__file__).parent.parent))
+# Add parent directory to path to import imsocio package
+sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 import streamlit as st
 import pandas as pd

@@ -4,6 +4,12 @@ Streamlit page for calibrant data processing.
 The user will upload a zip file containing the ATDs of their calibrants. A single gaussian curve will be fitted to each one, the centroid value of which is taken as the arrival time for that calibrant. These values, alongside values from the Bush database, are used to generate a calibration file for IMSCal.
 """
 
+import sys
+from pathlib import Path
+
+# Add parent directory to path
+sys.path.insert(0, str(Path(__file__).parent.parent.parent))
+
 from dataclasses import dataclass
 from typing import List, Tuple
 from pathlib import Path
@@ -334,9 +340,9 @@ def main():
         st.markdown("""
         <div class="info-card">
             <h3>📚 References</h3>
-            <p><sup>1</sup> TWIMExtract </p>
-            <p><sup>2</sup> IMSCal </p>
-            <p><sup>3</sup> Bush Database </p>
+            <p><sup>1</sup> Richardson, K., Langridge, D., Dixit, S.M., Ruotolo, B.T., 2021. An Improved Calibration Approach for Traveling Wave Ion Mobility Spectrometry: Robust, High-Precision Collision Cross Sections. Anal. Chem. 93, 3542–3550. https://doi.org/10.1021/acs.analchem.0c04948</p>
+            <p><sup>2</sup> Haynes, S.E., Polasky, D.A., Dixit, S.M., Majmudar, J.D., Neeson, K., Ruotolo, B.T., Martin, B.R., 2017. Variable-Velocity Traveling-Wave Ion Mobility Separation Enhancing Peak Capacity for Data-Independent Acquisition Proteomics. Anal. Chem. 89, 5669–5672. https://doi.org/10.1021/acs.analchem.7b00112</p>
+            <p><sup>3</sup> Bush, M.F., Hall, Z., Giles, K., Hoyes, J., Robinson, C.V., Ruotolo, B.T., 2010. Collision Cross Sections of Proteins and Their Complexes: A Calibration Framework and Database for Gas-Phase Structural Biology. Anal. Chem. 82, 9557–9565. https://doi.org/10.1021/ac1022953</p>
         </div>
         """, unsafe_allow_html=True)
         return

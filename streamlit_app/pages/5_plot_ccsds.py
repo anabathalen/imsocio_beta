@@ -6,6 +6,12 @@ with various display options, using the core imsocio library for all
 scientific computations.
 """
 
+import sys
+from pathlib import Path
+
+# Add parent directory to path
+sys.path.insert(0, str(Path(__file__).parent.parent.parent))
+
 import streamlit as st
 import pandas as pd
 import numpy as np
