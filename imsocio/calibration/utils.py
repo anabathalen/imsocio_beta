@@ -8,6 +8,7 @@ for calibration workflows.
 from dataclasses import dataclass
 from pathlib import Path
 import pandas as pd
+import numpy as np
 
 
 @dataclass

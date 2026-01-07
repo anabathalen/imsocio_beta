@@ -179,13 +179,18 @@ class CalibrantDatabase:
         # Get CCS value
         ccs_value = row[ccs_column]
         
-        # Check if CCS value is missing (NaN)
+        # Check if CCS value is missing (NaN, empty, or whitespace)
         if pd.isna(ccs_value):
+            return None
+        
+        # Convert to string and check if empty or whitespace
+        ccs_str = str(ccs_value).strip()
+        if not ccs_str:
             return None
         
         # Return both CCS and mass
         return {
-            'ccs': float(ccs_value),
+            'ccs': float(ccs_str),
             'mass': float(row['mass'])
         }
     
