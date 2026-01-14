@@ -103,7 +103,7 @@ def fit_baseline_and_integrate(
         corrected_y = np.maximum(corrected_y, 0)  # Remove negative values
         
         if len(corrected_y) > 1:
-            area = np.trapz(corrected_y, x_region)
+            area = np.trapezoid(corrected_y, x_region)
         else:
             area = 0.0
             
@@ -115,7 +115,7 @@ def fit_baseline_and_integrate(
         
     except Exception:
         # Fallback to simple integration
-        area = np.trapz(y_region, x_region)
+        area = np.trapezoid(y_region, x_region)
         return max(0.0, area), np.zeros_like(y)
 
 
