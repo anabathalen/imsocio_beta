@@ -93,32 +93,67 @@ class DriftCalibrationProcessor:
             return None
     
     @staticmethod
-    def load_mass_spectrum(ms_path: str) -> Optional[pd.DataFrame]:
+    def load_mass_spectrum(ms_path: str, verbose: bool = False) -> Optional[pd.DataFrame]:
         """
-        Load mass spectrum file with error handling.
+        Load mass spectrum file with error handling and detailed diagnostics.
         
         Args:
             ms_path: Path to mass spectrum file (tab-separated: m/z, intensity)
+            verbose: If True, print detailed error information
             
         Returns:
-            DataFrame with columns: m/z, Intensity
+            DataFrame with columns: m/z, Intensity, or None if loading fails
             
         Example:
             >>> ms_df = DriftCalibrationProcessor.load_mass_spectrum("mass_spectrum.txt")
         """
+        # Check if file exists
+        if not os.path.exists(ms_path):
+            if verbose:
+                print(f"❌ File not found: {ms_path}")
+                # Check for case-insensitive alternatives
+                parent_dir = os.path.dirname(ms_path)
+                if os.path.exists(parent_dir):
+                    files = os.listdir(parent_dir)
+                    similar = [f for f in files if f.lower() == "mass_spectrum.txt"]
+                    if similar:
+                        print(f"   Found similar file(s): {similar}")
+            return None
+        
         try:
-            if os.path.exists(ms_path):
-                ms_df = pd.read_csv(
-                    ms_path,
-                    sep="\t",
-                    header=None,
-                    names=["m/z", "Intensity"]
-                )
-                ms_df.dropna(inplace=True)
-                return ms_df
-        except Exception:
-            pass
-        return None
+            # Try tab-separated first
+            ms_df = pd.read_csv(
+                ms_path,
+                sep="\t",
+                header=None,
+                names=["m/z", "Intensity"]
+            )
+            
+            # Validate data
+            if ms_df.empty:
+                if verbose:
+                    print(f"⚠️ File is empty: {ms_path}")
+                return None
+            
+            if len(ms_df.columns) != 2:
+                if verbose:
+                    print(f"⚠️ Expected 2 columns, found {len(ms_df.columns)}: {ms_path}")
+                return None
+            
+            ms_df.dropna(inplace=True)
+            
+            if ms_df.empty:
+                if verbose:
+                    print(f"⚠️ No valid data rows after removing NaN: {ms_path}")
+                return None
+            
+            return ms_df
+            
+        except Exception as e:
+            if verbose:
+                print(f"❌ Error loading {ms_path}: {type(e).__name__}: {e}")
+                print(f"   Check that file is tab-separated with two columns (m/z, Intensity)")
+            return None
     
     @staticmethod
     def calculate_scale_factor(

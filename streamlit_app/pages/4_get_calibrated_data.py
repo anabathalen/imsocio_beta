@@ -385,12 +385,13 @@ def extract_protein_names_from_csvs(cal_csvs: List) -> List[str]:
 
 
 def load_mass_spectra(drift_zip) -> Dict[str, pd.DataFrame]:
-    """Load mass spectrum files from ZIP."""
+    """Load mass spectrum files from ZIP with detailed troubleshooting."""
     import zipfile
     import tempfile
     import os
     
     ms_data = {}
+    search_log = []  # Track where we looked
     
     with tempfile.TemporaryDirectory() as tmpdir:
         # Extract ZIP
@@ -403,12 +404,84 @@ def load_mass_spectra(drift_zip) -> Dict[str, pd.DataFrame]:
         
         # Find mass spectrum files
         for root, dirs, files in os.walk(tmpdir):
+            protein_name = os.path.basename(root)
+            
+            # Skip root directory (same as module version)
+            if root == tmpdir or protein_name == os.path.basename(tmpdir):
+                search_log.append(f"⏭️ Skipped root directory: {protein_name}")
+                continue
+            
+            # Skip __MACOSX and hidden folders
+            if protein_name.startswith("__") or protein_name.startswith("."):
+                search_log.append(f"⏭️ Skipped hidden folder: {protein_name}")
+                continue
+            
+            # Log what we're checking
+            relative_path = os.path.relpath(root, tmpdir)
+            search_log.append(f"📂 Checking folder: {relative_path}")
+            
+            # Try exact match first
             if "mass_spectrum.txt" in files:
-                protein_name = os.path.basename(root)
                 ms_path = os.path.join(root, "mass_spectrum.txt")
                 ms_df = DriftCalibrationProcessor.load_mass_spectrum(ms_path)
                 if ms_df is not None:
                     ms_data[protein_name] = ms_df
+                    search_log.append(f"✅ Found mass_spectrum.txt in {relative_path}")
+                else:
+                    search_log.append(f"⚠️ Found mass_spectrum.txt in {relative_path} but failed to load (check file format)")
+            else:
+                # Try case-insensitive match
+                mass_spec_files = [f for f in files if f.lower() == "mass_spectrum.txt"]
+                if mass_spec_files:
+                    actual_name = mass_spec_files[0]
+                    search_log.append(f"⚠️ Found '{actual_name}' (case mismatch) in {relative_path}")
+                    ms_path = os.path.join(root, actual_name)
+                    ms_df = DriftCalibrationProcessor.load_mass_spectrum(ms_path)
+                    if ms_df is not None:
+                        ms_data[protein_name] = ms_df
+                        search_log.append(f"✅ Loaded '{actual_name}' successfully")
+                    else:
+                        search_log.append(f"❌ Failed to load '{actual_name}' (check file format)")
+                else:
+                    # Log what files ARE there
+                    if files:
+                        file_list = ", ".join(files[:5])
+                        if len(files) > 5:
+                            file_list += f", ... ({len(files)} total)"
+                        search_log.append(f"❌ No mass_spectrum.txt in {relative_path}. Found: {file_list}")
+                    else:
+                        search_log.append(f"❌ No files in {relative_path}")
+    
+    # Display troubleshooting information if no files found
+    if not ms_data:
+        with st.expander("🔍 Troubleshooting: Where did we look?", expanded=True):
+            st.markdown("**Search Log:**")
+            for log_entry in search_log:
+                st.text(log_entry)
+            
+            st.markdown("---")
+            st.markdown("**Common Issues:**")
+            st.markdown("""
+            1. **Extra wrapper folder**: Your ZIP might have an extra folder layer
+               - ❌ `data.zip/data/protein1/mass_spectrum.txt`
+               - ✅ `data.zip/protein1/mass_spectrum.txt`
+            
+            2. **Case sensitivity**: File must be named exactly `mass_spectrum.txt`
+               - ❌ `Mass_spectrum.txt`, `MASS_SPECTRUM.TXT`
+               - ✅ `mass_spectrum.txt`
+            
+            3. **Hidden file extension**: Windows may hide `.txt` extension
+               - Your file might actually be `mass_spectrum.txt.txt`
+               - In File Explorer: View → Show → File name extensions
+            
+            4. **Mac hidden folders**: ZIP created on Mac may contain `__MACOSX` folders
+               - These are automatically skipped
+            
+            5. **File format**: Must be tab-separated with two columns (m/z, Intensity)
+            """)
+    else:
+        # Show success summary
+        st.success(f"✅ Found mass spectra for: {', '.join(ms_data.keys())}")
     
     return ms_data
 
@@ -457,7 +530,12 @@ def main():
         ms_data = load_mass_spectra(drift_zip)
     
     if not ms_data:
-        st.error("❌ No mass spectrum files found in ZIP. Each protein folder must contain a mass spectrum and this must be called mass_spectrum.txt")
+        st.error("""
+        ❌ **No mass spectrum files found in ZIP**
+        
+        Each protein folder must contain a file named exactly `mass_spectrum.txt`.
+        Please check the troubleshooting information above for details about where we looked.
+        """)
         return
     
     # Step 5.5: Scaling method selection
