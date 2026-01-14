@@ -63,6 +63,10 @@ def is_valid_calibrant_file(file_path: Path) -> bool:
         logger.warning(f"Path is not a file: {file_path}")
         return False
     
+    # Skip hidden/system files (like .DS_Store on Mac)
+    if file_path.name.startswith('.'):
+        return False
+    
     # Check if it's a CSV file
     if file_path.suffix.lower() == '.csv':
         # Get filename without the .csv extension

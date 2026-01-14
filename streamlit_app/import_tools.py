@@ -5,6 +5,7 @@ Functions for handling file uploads, reading data, and managing temporary files.
 import os
 import zipfile
 import shutil
+import tempfile
 from pathlib import Path
 
 import pandas as pd
@@ -24,15 +25,13 @@ def handle_zip_upload(uploaded_file):
         Tuple of (folders, temp_dir) where folders is a list of subfolder names
         and temp_dir is the path to the extraction directory
     """
-    temp_dir = '/tmp/extracted_zip/'
+    # Use system temp directory (works on Windows, Mac, Linux)
+    system_temp = tempfile.gettempdir()
+    temp_dir = os.path.join(system_temp, 'imsocio_extracted_zip')
 
     # Clean up existing temp directory
     if os.path.exists(temp_dir):
-        for root, dirs, files in os.walk(temp_dir, topdown=False):
-            for name in files:
-                os.remove(os.path.join(root, name))
-            for name in dirs:
-                os.rmdir(os.path.join(root, name))
+        shutil.rmtree(temp_dir, ignore_errors=True)
 
     os.makedirs(temp_dir, exist_ok=True)
 
@@ -40,8 +39,14 @@ def handle_zip_upload(uploaded_file):
     with zipfile.ZipFile(uploaded_file, 'r') as zip_ref:
         zip_ref.extractall(temp_dir)
 
-    # Find subfolders
-    folders = [f for f in os.listdir(temp_dir) if os.path.isdir(os.path.join(temp_dir, f))]
+    # Find subfolders, excluding system/hidden folders (like __MACOSX on Mac)
+    folders = [
+        f for f in os.listdir(temp_dir)
+        if os.path.isdir(os.path.join(temp_dir, f))
+        and not f.startswith('.')
+        and f != '__MACOSX'
+    ]
+    
     if not folders:
         st.error("No folders found in the ZIP file :(")
     
@@ -70,7 +75,9 @@ def clear_cache():
     
     Note: Does NOT call st.rerun() - caller should handle rerun if needed.
     """
-    temp_dir = Path('/tmp/extracted_zip/')
+    # Use system temp directory (same as handle_zip_upload)
+    system_temp = tempfile.gettempdir()
+    temp_dir = Path(system_temp) / 'imsocio_extracted_zip'
     
     if temp_dir.exists() and temp_dir.is_dir():
         shutil.rmtree(temp_dir, ignore_errors=True)
