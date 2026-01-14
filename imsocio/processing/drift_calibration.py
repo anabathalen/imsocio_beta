@@ -8,6 +8,7 @@ and applies scaling factors from mass spectra.
 from dataclasses import dataclass
 from typing import Dict, List, Tuple, Optional
 from pathlib import Path
+import os
 import pandas as pd
 import numpy as np
 import zipfile
