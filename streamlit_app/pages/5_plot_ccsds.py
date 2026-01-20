@@ -794,7 +794,7 @@ def main():
                 # Show only total CCSD (sum of all charge states)
                 st.info("Showing total CCSD (sum of all charge states)")
                 
-                fig, maxima_info, font_warning = CCSDPlotter.plot_total_ccsd(
+                result = CCSDPlotter.plot_total_ccsd(
                     ccsd_data=ccsd_data,
                     selected_charges=dataset_charges[name],
                     settings=settings,
