@@ -54,7 +54,7 @@ class DriftCalibrationProcessor:
         Load ATD file and normalize intensities to max value of 1.
         
         Args:
-            file_path: Path to ATD file (tab-separated: drift time, intensity)
+            file_path: Path to ATD file (tab or comma-separated: drift time, intensity)
             instrument_type: 'Synapt' or 'Cyclic'
             inject_time: Injection time in ms (for Cyclic IMS)
             
@@ -69,19 +69,25 @@ class DriftCalibrationProcessor:
             1.0
         """
         try:
-            raw_df = pd.read_csv(
-                file_path,
-                sep="\t",
-                header=None,
-                names=["Drift", "Intensity"]
-            )
+            # Use the readers module to load the data
+            from ..io.readers import load_atd_data
+            
+            drift_time, intensity = load_atd_data(Path(file_path))
+            
+            # Create DataFrame
+            raw_df = pd.DataFrame({
+                "Drift": drift_time,
+                "Intensity": intensity
+            })
             
             # Apply instrument-specific drift time correction
             if instrument_type.lower() == "cyclic" and inject_time is not None:
                 raw_df["Drift"] = raw_df["Drift"] - inject_time
             
-            # Convert from µs to ms
-            raw_df["Drift"] = raw_df["Drift"] / 1000.0
+            # Note: Drift time should already be in ms from load_atd_data
+            # but TWIMExtract files are sometimes in seconds, so check the range
+            if raw_df["Drift"].max() < 1.0:  # If all values < 1, likely in seconds
+                raw_df["Drift"] = raw_df["Drift"] * 1000.0  # Convert to ms
             
             # Normalize ATD intensities so maximum is 1
             max_intensity = raw_df["Intensity"].max()
@@ -303,13 +309,18 @@ class DriftCalibrationProcessor:
                 protein_mass = protein_masses.get(protein_name, None)
 
                 # Process ATD files for each charge state
+                # Import file validation functions
+                from ..io.readers import is_valid_calibrant_file, extract_charge_state_from_filename
+                
                 atd_files = [
                     f for f in files
-                    if f.endswith(".txt") and f.split(".")[0].isdigit()
+                    if is_valid_calibrant_file(Path(os.path.join(root, f)))
                 ]
 
                 for file in atd_files:
-                    charge_state = int(file.split(".")[0])
+                    charge_state = extract_charge_state_from_filename(file)
+                    if charge_state is None:
+                        continue
 
                     # Skip if outside charge range
                     if charge_state < charge_range[0] or charge_state > charge_range[1]:
