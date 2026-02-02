@@ -23,7 +23,7 @@ def is_valid_calibrant_file(file_path: Path) -> bool:
     
     This function determines if a file should be processed as calibrant data
     by checking:
-    1. File extension (.txt or .csv)
+    1. File extension (.txt, .csv, or _raw without extension)
     2. Filename pattern indicating charge state
     
     For .txt files: The filename should start with a number (the charge state)
@@ -33,6 +33,10 @@ def is_valid_calibrant_file(file_path: Path) -> bool:
     - "range_24.txt" 
     - "range_24_raw"
     - "DT_sample_range_24.txt_raw"
+    
+    For TWIM extract files (ending with _raw): The filename should contain:
+    - "#range_24" (e.g., "DT_20260120_sample_#range_24.txt_raw")
+    - Other charge state patterns
     
     Args:
         file_path: Path object pointing to the file to check
@@ -66,6 +70,9 @@ def is_valid_calibrant_file(file_path: Path) -> bool:
     # Skip hidden/system files (like .DS_Store on Mac)
     if file_path.name.startswith('.'):
         return False
+    
+    # Get filename for pattern matching
+    filename = file_path.name
     
     # Check if it's a CSV file
     if file_path.suffix.lower() == '.csv':
@@ -107,7 +114,27 @@ def is_valid_calibrant_file(file_path: Path) -> bool:
             logger.debug(f"TXT file does not start with digit: {file_path.name}")
         return is_valid
     
-    # If it's neither .txt nor .csv, it's not valid
+    # Check if it's a TWIM extract file (ends with _raw but has no extension)
+    elif filename.endswith('_raw'):
+        # These files are comma-separated like CSV files
+        # Pattern matching for charge state in the filename
+        patterns = [
+            r'#range_(\d+)',        # Matches "#range_24" (ORIGAMI/TWIM extract format)
+            r'range_(\d+)\.txt',    # Matches "range_24.txt"
+            r'range_(\d+)_',        # Matches "range_24_"
+            r'_(\d+)\.txt_raw',     # Matches "_24.txt_raw"
+            r'charge(\d+)',         # Matches "charge15" or "charge_15"
+        ]
+        
+        # Try each pattern to see if we can find a charge state
+        for pattern in patterns:
+            if re.search(pattern, filename):
+                return True
+        
+        logger.debug(f"TWIM extract file does not match charge state pattern: {file_path.name}")
+        return False
+    
+    # If it's neither .txt nor .csv nor _raw file, it's not valid
     else:
         logger.debug(f"Unsupported file extension: {file_path.suffix}")
         return False
@@ -187,9 +214,10 @@ def load_atd_data(file_path: Path) -> Tuple[np.ndarray, np.ndarray]:
     """
     Load drift time and intensity data from an ATD (arrival time distribution) file.
     
-    This function supports two formats:
+    This function supports three formats:
     1. .txt files: Two-column space-separated data from MassLynx
     2. .csv files: Comma-separated data from TWIMExtract (can include # comments)
+    3. _raw files: Comma-separated TWIM extract files (can include # comments)
     
     Args:
         file_path: Path to the ATD data file
@@ -224,8 +252,8 @@ def load_atd_data(file_path: Path) -> Tuple[np.ndarray, np.ndarray]:
     if file_size > 100_000_000:  # 100 MB
         logger.warning(f"Large file detected ({file_size / 1_000_000:.1f} MB): {file_path}")
     
-    # Handle CSV files (from TWIMExtract)
-    if file_path.suffix.lower() == '.csv':
+    # Handle CSV files and TWIM extract files (from TWIMExtract - ends with _raw)
+    if file_path.suffix.lower() == '.csv' or file_path.name.endswith('_raw'):
         data_rows = []
         invalid_lines = 0
         
