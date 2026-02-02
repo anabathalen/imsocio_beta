@@ -2,6 +2,7 @@
 
 from imsocio.io.readers import (
     load_atd_data,
+    load_mass_spectrum,
     is_valid_calibrant_file,
     extract_charge_state_from_filename,
     load_multiple_atd_files
@@ -24,6 +25,7 @@ from imsocio.io.range_generator import (
 
 __all__ = [
     'load_atd_data',
+    'load_mass_spectrum',
     'is_valid_calibrant_file', 
     'extract_charge_state_from_filename',
     'load_multiple_atd_files',

@@ -267,8 +267,8 @@ def load_atd_data(file_path: Path) -> Tuple[np.ndarray, np.ndarray]:
                     if not line:
                         continue
                     
-                    # Skip comment lines (start with #)
-                    if line.startswith('#'):
+                    # Skip comment lines (start with # or $)
+                    if line.startswith('#') or line.startswith('$'):
                         continue
                     
                     # Try to parse the data
@@ -488,3 +488,122 @@ def load_multiple_atd_files(folder_path: Path) -> dict:
         logger.info(f"Successfully loaded {len(results)} charge states from {folder_path}")
     
     return results
+
+
+def load_mass_spectrum(file_path: Path) -> Tuple[np.ndarray, np.ndarray]:
+    """
+    Load mass spectrum file (m/z vs intensity).
+    
+    This function supports:
+    1. Tab-separated files (most common from MassLynx)
+    2. Comma-separated files
+    3. Space-separated files
+    4. Files with comment lines (# or $)
+    
+    Args:
+        file_path: Path to the mass spectrum file
+        
+    Returns:
+        A tuple of two numpy arrays: (mz, intensity)
+        - mz: Array of m/z values
+        - intensity: Array of intensity values corresponding to each m/z
+        
+    Raises:
+        FileNotFoundError: If the file doesn't exist
+        ValueError: If no valid data is found or file format is invalid
+        
+    Examples:
+        >>> mz, intensity = load_mass_spectrum(Path("mass_spectrum.txt"))
+        >>> print(f"m/z range: {mz.min():.1f} - {mz.max():.1f}")
+        m/z range: 500.0 - 5000.0
+    """
+    # Check if file exists
+    if not file_path.exists():
+        raise FileNotFoundError(f"File not found: {file_path}")
+    
+    if not file_path.is_file():
+        raise ValueError(f"Path is not a file: {file_path}")
+    
+    data_rows = []
+    invalid_lines = 0
+    
+    # Try reading as text file line by line for maximum compatibility
+    try:
+        with open(file_path, 'r', encoding='utf-8') as f:
+            for line_num, line in enumerate(f, start=1):
+                line = line.strip()
+                
+                # Skip empty lines
+                if not line:
+                    continue
+                
+                # Skip comment lines (start with # or $)
+                if line.startswith('#') or line.startswith('$'):
+                    continue
+                
+                # Try to parse the data
+                try:
+                    # Try different delimiters in order of likelihood
+                    values = None
+                    if '\t' in line:
+                        values = line.split('\t')
+                    elif ',' in line:
+                        values = line.split(',')
+                    else:
+                        values = line.split()
+                    
+                    # We need at least 2 values (m/z and intensity)
+                    if len(values) >= 2:
+                        mz = float(values[0])
+                        intensity = float(values[1])
+                        
+                        # Check for NaN or Inf values
+                        if np.isnan(mz) or np.isnan(intensity):
+                            invalid_lines += 1
+                            continue
+                        if np.isinf(mz) or np.isinf(intensity):
+                            invalid_lines += 1
+                            continue
+                        
+                        # Validate data is reasonable for mass spectrum
+                        if mz < 0:
+                            logger.warning(f"Negative m/z at line {line_num}: {mz}")
+                            invalid_lines += 1
+                            continue
+                        if intensity < 0:
+                            logger.warning(f"Negative intensity at line {line_num}: {intensity}")
+                            invalid_lines += 1
+                            continue
+                        
+                        data_rows.append([mz, intensity])
+                    else:
+                        invalid_lines += 1
+                        
+                except (ValueError, IndexError) as e:
+                    invalid_lines += 1
+                    if invalid_lines <= 5:  # Only log first few errors
+                        logger.debug(f"Could not parse line {line_num} in {file_path.name}: {e}")
+                    continue
+    
+    except (IOError, OSError) as e:
+        raise IOError(f"Error reading file {file_path}: {e}")
+    except UnicodeDecodeError as e:
+        raise ValueError(f"File encoding error (not valid UTF-8): {file_path}: {e}")
+    
+    # Warn if many invalid lines
+    if invalid_lines > 10:
+        logger.warning(f"Skipped {invalid_lines} invalid lines in {file_path.name}")
+    
+    # Check if we got any data
+    if not data_rows:
+        raise ValueError(f"No valid data found in mass spectrum file: {file_path}")
+    
+    # Check if we have enough data points
+    if len(data_rows) < 10:
+        logger.warning(f"Very few data points ({len(data_rows)}) in mass spectrum {file_path.name}")
+    
+    # Convert list to numpy array
+    data = np.array(data_rows)
+    
+    # Return as two separate arrays
+    return data[:, 0], data[:, 1]

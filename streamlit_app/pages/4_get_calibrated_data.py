@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Dict, List, Tuple
 import pandas as pd
 import matplotlib.pyplot as plt
+import hashlib
 
 # Add parent directory to path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
@@ -30,6 +31,52 @@ from imsocio.processing import (
     plot_full_spectrum_with_charge_states,
     PROTON_MASS
 )
+
+
+@st.cache_data
+def cached_calculate_scale_factor(
+    ms_data_hash: str,
+    protein: str,
+    charge: int,
+    mass: float,
+    range_min: float,
+    range_max: float,
+    use_max_intensity: bool,
+    smoothing_window: int,
+    _ms_df: pd.DataFrame  # Leading underscore tells Streamlit not to hash this
+):
+    """Cached version of scale factor calculation."""
+    scale_factor, mz = DriftCalibrationProcessor.calculate_scale_factor(
+        _ms_df,
+        protein,
+        charge,
+        mass,
+        {(protein, charge): (range_min, range_max)},
+        use_max_intensity=use_max_intensity,
+        smoothing_window=smoothing_window
+    )
+    return scale_factor, mz
+
+
+@st.cache_data
+def cached_plot_spectrum(
+    ms_data_hash: str,
+    mz_theoretical: float,
+    range_min: float,
+    range_max: float,
+    smoothing_window: int,
+    show_zoomed: bool,
+    _ms_df: pd.DataFrame
+):
+    """Cached version of spectrum plotting."""
+    area, range_outside, fig = plot_spectrum_with_integration(
+        _ms_df,
+        mz_theoretical,
+        (range_min, range_max),
+        smoothing_window=smoothing_window,
+        show_zoomed=show_zoomed
+    )
+    return area, range_outside, fig
 
 
 class UI:
@@ -238,14 +285,78 @@ class UI:
         scale_ranges = {}
         scale_factor_data = []  # For live table
         
+        # Pre-compute hashes for all proteins (only once per protein's mass spectrum)
+        if 'ms_hashes' not in st.session_state:
+            st.session_state.ms_hashes = {}
+        
         for protein in protein_names:
             if protein not in ms_data or protein_masses.get(protein, 0) == 0:
                 continue
             
+            # Compute hash only once per protein
+            if protein not in st.session_state.ms_hashes:
+                st.session_state.ms_hashes[protein] = hashlib.md5(
+                    ms_data[protein].to_json().encode()
+                ).hexdigest()
+            
             st.markdown(f"#### {protein}")
             ms_df = ms_data[protein]
+            ms_hash = st.session_state.ms_hashes[protein]
             mass = protein_masses[protein]
             min_charge, max_charge = charge_ranges.get(protein, (2, 4))
+            
+            # Protein-level defaults (collapsible section)
+            with st.expander(f"⚙️ {protein} - Default Settings", expanded=False):
+                col_a, col_b = st.columns(2)
+                with col_a:
+                    # Default integration range percentage
+                    default_percent_key = f"default_percent_{protein}"
+                    if default_percent_key not in st.session_state:
+                        st.session_state[default_percent_key] = 5.0
+                    
+                    default_percent = st.number_input(
+                        "Default integration range (%)",
+                        min_value=1.0,
+                        max_value=20.0,
+                        value=st.session_state[default_percent_key],
+                        step=0.5,
+                        key=default_percent_key,
+                        help="This percentage will be used as default for all charge states of this protein"
+                    )
+                
+                with col_b:
+                    # Default smoothing window
+                    default_smooth_key = f"default_smooth_{protein}"
+                    if default_smooth_key not in st.session_state:
+                        st.session_state[default_smooth_key] = 51
+                    
+                    # Ensure the value is odd before creating the widget
+                    current_value = st.session_state[default_smooth_key]
+                    if current_value % 2 == 0:
+                        current_value += 1
+                        st.session_state[default_smooth_key] = current_value
+                    
+                    default_smoothing = st.number_input(
+                        "Default smoothing window",
+                        min_value=3,
+                        max_value=201,
+                        value=current_value,
+                        step=2,
+                        key=default_smooth_key,
+                        help="Window size for baseline smoothing (must be odd). Applies to all charge states."
+                    )
+                
+                # Button to apply defaults to all charge states
+                if st.button(f"Apply defaults to all {protein} charge states", key=f"apply_defaults_{protein}"):
+                    charges = list(range(min_charge, max_charge + 1))
+                    for charge in charges:
+                        mz = calculate_theoretical_mz(mass, charge)
+                        auto_min, auto_max = get_automatic_range(mz, default_percent)
+                        st.session_state[f"range_min_{protein}_{charge}"] = auto_min
+                        st.session_state[f"range_max_{protein}_{charge}"] = auto_max
+                        st.session_state[f"smoothing_{protein}_{charge}"] = default_smoothing
+                    st.success(f"✅ Applied defaults to all {protein} charge states")
+                    st.rerun()
             
             # Create tabs for each charge state
             charges = list(range(min_charge, max_charge + 1))
@@ -255,58 +366,104 @@ class UI:
                 with tabs[idx]:
                     mz = calculate_theoretical_mz(mass, charge)
                     
+                    # Initialize session state if not present (using protein defaults)
+                    if f"range_min_{protein}_{charge}" not in st.session_state:
+                        default_auto_min, default_auto_max = get_automatic_range(
+                            mz, 
+                            st.session_state.get(f"default_percent_{protein}", 5.0)
+                        )
+                        st.session_state[f"range_min_{protein}_{charge}"] = default_auto_min
+                        st.session_state[f"range_max_{protein}_{charge}"] = default_auto_max
+                    
+                    # Initialize smoothing if not present
+                    if f"smoothing_{protein}_{charge}" not in st.session_state:
+                        st.session_state[f"smoothing_{protein}_{charge}"] = st.session_state.get(
+                            f"default_smooth_{protein}", 51
+                        )
+                    
                     col1, col2 = st.columns([1, 2])
                     
                     with col1:
-                        # Auto-range suggestion
-                        auto_percent = st.slider(
-                            "Auto-range %",
-                            min_value=1.0,
-                            max_value=20.0,
-                            value=5.0,
-                            step=0.5,
-                            key=f"auto_{protein}_{charge}"
-                        )
-                        auto_min, auto_max = get_automatic_range(mz, auto_percent)
+                        with st.form(key=f"form_{protein}_{charge}"):
+                            # Auto-range suggestion using protein default
+                            auto_percent = st.slider(
+                                "Auto-range %",
+                                min_value=1.0,
+                                max_value=20.0,
+                                value=float(st.session_state.get(f"default_percent_{protein}", 5.0)),
+                                step=0.5,
+                                help="Adjust this to change the integration range for this specific charge state"
+                            )
+                            
+                            # Ensure the smoothing value is odd
+                            current_smoothing = st.session_state[f"smoothing_{protein}_{charge}"]
+                            if current_smoothing % 2 == 0:
+                                current_smoothing += 1
+                                st.session_state[f"smoothing_{protein}_{charge}"] = current_smoothing
+                            
+                            # Manual range input
+                            range_min = st.number_input(
+                                "Min m/z",
+                                value=st.session_state[f"range_min_{protein}_{charge}"],
+                                format="%.3f"
+                            )
+                            range_max = st.number_input(
+                                "Max m/z",
+                                value=st.session_state[f"range_max_{protein}_{charge}"],
+                                format="%.3f"
+                            )
+                            
+                            # Smoothing window for this charge state
+                            smoothing_window = st.number_input(
+                                "Smoothing window",
+                                min_value=3,
+                                max_value=201,
+                                value=current_smoothing,
+                                step=2,
+                                help="Window size for Savitzky-Golay smoothing (must be odd)"
+                            )
+                            
+                            col_btn1, col_btn2 = st.columns(2)
+                            with col_btn1:
+                                update_button = st.form_submit_button("🔄 Update", type="primary")
+                            with col_btn2:
+                                auto_button = st.form_submit_button("Use auto-range")
+                            
+                            if auto_button:
+                                auto_min, auto_max = get_automatic_range(mz, auto_percent)
+                                st.session_state[f"range_min_{protein}_{charge}"] = auto_min
+                                st.session_state[f"range_max_{protein}_{charge}"] = auto_max
+                                st.rerun()
+                            
+                            if update_button:
+                                st.session_state[f"range_min_{protein}_{charge}"] = range_min
+                                st.session_state[f"range_max_{protein}_{charge}"] = range_max
+                                st.session_state[f"smoothing_{protein}_{charge}"] = smoothing_window
+                                st.rerun()
                         
-                        if st.button(f"Use auto-range", key=f"auto_btn_{protein}_{charge}"):
-                            st.session_state[f"range_min_{protein}_{charge}"] = auto_min
-                            st.session_state[f"range_max_{protein}_{charge}"] = auto_max
-                            st.rerun()
-                        
-                        # Initialize session state if not present
-                        if f"range_min_{protein}_{charge}" not in st.session_state:
-                            st.session_state[f"range_min_{protein}_{charge}"] = auto_min
-                        if f"range_max_{protein}_{charge}" not in st.session_state:
-                            st.session_state[f"range_max_{protein}_{charge}"] = auto_max
-                        
-                        # Manual range input
-                        range_min = st.number_input(
-                            "Min m/z",
-                            key=f"range_min_{protein}_{charge}",
-                            format="%.3f"
-                        )
-                        range_max = st.number_input(
-                            "Max m/z",
-                            key=f"range_max_{protein}_{charge}",
-                            format="%.3f"
-                        )
+                        # Use values from session state for calculations
+                        range_min = st.session_state[f"range_min_{protein}_{charge}"]
+                        range_max = st.session_state[f"range_max_{protein}_{charge}"]
+                        smoothing_window = st.session_state[f"smoothing_{protein}_{charge}"]
                         
                         scale_ranges[(protein, charge)] = (range_min, range_max)
                         
-                        # Calculate scale factor in real-time
-                        scale_factor, _ = DriftCalibrationProcessor.calculate_scale_factor(
-                            ms_df,
+                        # Show theoretical m/z
+                        st.metric("Theoretical m/z", f"{mz:.3f}")
+                        
+                        # Calculate scale factor using cached function (ms_hash already computed above)
+                        scale_factor, _ = cached_calculate_scale_factor(
+                            ms_hash,
                             protein,
                             charge,
                             mass,
-                            {(protein, charge): (range_min, range_max)},
-                            use_max_intensity=use_max_intensity,
-                            smoothing_window=10
+                            range_min,
+                            range_max,
+                            use_max_intensity,
+                            smoothing_window,
+                            ms_df
                         )
                         
-                        # Show theoretical m/z and scale factor
-                        st.metric("Theoretical m/z", f"{mz:.3f}")
                         if scale_factor is not None:
                             st.metric("Scale Factor", f"{scale_factor:.2e}")
                             # Store for table
@@ -321,19 +478,22 @@ class UI:
                             st.warning("⚠ Could not calculate scale factor")
                     
                     with col2:
-                        # Plot with integration preview
+                        # Plot with integration preview (always shown)
                         show_zoomed = st.checkbox(
                             "Zoom to ±10%",
                             value=True,
                             key=f"zoom_{protein}_{charge}"
                         )
                         
-                        area, range_outside, fig = plot_spectrum_with_integration(
-                            ms_df,
+                        # Use cached plotting function (ms_hash already computed above)
+                        area, range_outside, fig = cached_plot_spectrum(
+                            ms_hash,
                             mz,
-                            (range_min, range_max),
-                            smoothing_window=10,
-                            show_zoomed=show_zoomed
+                            range_min,
+                            range_max,
+                            smoothing_window,
+                            show_zoomed,
+                            ms_df
                         )
                         
                         if fig:
@@ -342,15 +502,13 @@ class UI:
                         
                         # Display appropriate message based on method
                         if area is not None:
-                            # Note: area variable contains integration result from plot
-                            # but scale_factor uses the selected method
-                            st.success(f"✓ Integration area: {area:.2e}")
                             if use_max_intensity:
-                                st.info("Don't worry about the shaded area - you have selected maximum intensity which is represented by the red dot.")
-                        elif range_outside:
-                            st.warning("⚠ Integration range extends beyond view. Toggle zoom to see full range.")
-                        else:
-                            st.warning("⚠ Integration range too small. Please expand the range.")
+                                st.info(f"Scale factor based on max intensity in range")
+                            else:
+                                st.info(f"Integrated area (baseline-corrected): {area:.2e}")
+                            
+                            if range_outside:
+                                st.warning("⚠️ Integration range extends beyond visible spectrum")
         
         # Create DataFrame of scale factors
         scale_factors_df = pd.DataFrame(scale_factor_data) if scale_factor_data else None
@@ -569,6 +727,17 @@ def main():
         st.warning("⚠ Please configure at least one integration range.")
         return
     
+    # Collect smoothing parameters for each protein/charge
+    smoothing_params = {}
+    for protein in protein_names:
+        min_charge, max_charge = charge_ranges.get(protein, (2, 4))
+        for charge in range(min_charge, max_charge + 1):
+            key = (protein, charge)
+            if key in scale_ranges:  # Only include if there's a scale range
+                smoothing_params[key] = st.session_state.get(
+                    f"smoothing_{protein}_{charge}", 51
+                )
+    
     # Display scale factors table
     if scale_factors_df is not None and len(scale_factors_df) > 0:
         st.markdown("---")
@@ -608,7 +777,9 @@ def main():
                 charge_ranges=charge_ranges,
                 scale_ranges=scale_ranges,
                 protein_masses=protein_masses,
-                use_max_intensity=use_max_intensity
+                ms_data=ms_data,
+                use_max_intensity=use_max_intensity,
+                smoothing_params=smoothing_params
             )
             
             # Show results

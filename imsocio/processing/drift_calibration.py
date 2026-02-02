@@ -84,10 +84,8 @@ class DriftCalibrationProcessor:
             if instrument_type.lower() == "cyclic" and inject_time is not None:
                 raw_df["Drift"] = raw_df["Drift"] - inject_time
             
-            # Note: Drift time should already be in ms from load_atd_data
-            # but TWIMExtract files are sometimes in seconds, so check the range
-            if raw_df["Drift"].max() < 1.0:  # If all values < 1, likely in seconds
-                raw_df["Drift"] = raw_df["Drift"] * 1000.0  # Convert to ms
+            # ATD files should already be in ms
+            # (both text files and TWIM extract files are in ms)
             
             # Normalize ATD intensities so maximum is 1
             max_intensity = raw_df["Intensity"].max()
@@ -102,10 +100,12 @@ class DriftCalibrationProcessor:
     @staticmethod
     def load_mass_spectrum(ms_path: str, verbose: bool = False) -> Optional[pd.DataFrame]:
         """
-        Load mass spectrum file with error handling and detailed diagnostics.
+        Load mass spectrum file with error handling.
+        
+        Uses the unified load_mass_spectrum function from imsocio.io.readers.
         
         Args:
-            ms_path: Path to mass spectrum file (tab-separated: m/z, intensity)
+            ms_path: Path to mass spectrum file
             verbose: If True, print detailed error information
             
         Returns:
@@ -128,38 +128,23 @@ class DriftCalibrationProcessor:
             return None
         
         try:
-            # Try tab-separated first
-            ms_df = pd.read_csv(
-                ms_path,
-                sep="\t",
-                header=None,
-                names=["m/z", "Intensity"]
-            )
+            # Use the unified loader from io.readers
+            from ..io.readers import load_mass_spectrum
             
-            # Validate data
-            if ms_df.empty:
-                if verbose:
-                    print(f"⚠️ File is empty: {ms_path}")
-                return None
+            mz, intensity = load_mass_spectrum(Path(ms_path))
             
-            if len(ms_df.columns) != 2:
-                if verbose:
-                    print(f"⚠️ Expected 2 columns, found {len(ms_df.columns)}: {ms_path}")
-                return None
-            
-            ms_df.dropna(inplace=True)
-            
-            if ms_df.empty:
-                if verbose:
-                    print(f"⚠️ No valid data rows after removing NaN: {ms_path}")
-                return None
+            # Convert to DataFrame for compatibility with existing code
+            ms_df = pd.DataFrame({
+                "m/z": mz,
+                "Intensity": intensity
+            })
             
             return ms_df
             
         except Exception as e:
             if verbose:
                 print(f"❌ Error loading {ms_path}: {type(e).__name__}: {e}")
-                print(f"   Check that file is tab-separated with two columns (m/z, Intensity)")
+                print(f"   Check that file has two columns (m/z, Intensity)")
             return None
     
     @staticmethod
@@ -241,7 +226,9 @@ class DriftCalibrationProcessor:
         charge_ranges: Dict[str, Tuple[int, int]],
         scale_ranges: Dict[Tuple[str, int], Tuple[float, float]],
         protein_masses: Dict[str, float],
-        use_max_intensity: bool = False
+        ms_data: Dict[str, pd.DataFrame],
+        use_max_intensity: bool = False,
+        smoothing_params: Optional[Dict[Tuple[str, int], int]] = None
     ) -> Tuple[CalibratedDriftResult, List[str]]:
         """
         Match calibration data with ATD data and apply scaling.
@@ -263,7 +250,9 @@ class DriftCalibrationProcessor:
             charge_ranges: Dict mapping protein names to (min_charge, max_charge)
             scale_ranges: Dict mapping (protein, charge) to (min_mz, max_mz)
             protein_masses: Dict mapping protein names to masses in Da
+            ms_data: Dict mapping protein names to mass spectrum DataFrames
             use_max_intensity: Use max intensity instead of integration
+            smoothing_params: Optional dict mapping (protein, charge) to smoothing window size
             
         Returns:
             Tuple of (CalibratedDriftResult, list of skipped file messages)
@@ -272,6 +261,10 @@ class DriftCalibrationProcessor:
         processed_files = 0
         matched_points = 0
         skipped_files = []
+        
+        # Use default smoothing if not provided
+        if smoothing_params is None:
+            smoothing_params = {}
 
         with tempfile.TemporaryDirectory() as tmpdir:
             # Extract ZIP file
@@ -286,6 +279,11 @@ class DriftCalibrationProcessor:
             for file in cal_csvs:
                 protein_name = file.name.replace(".csv", "")
                 df = pd.read_csv(file)
+                
+                # Calibration CSVs are generated in seconds (for IMSCal)
+                # but ATD files are in ms, so convert calibration to ms
+                df["Drift"] = df["Drift"] * 1000.0
+                
                 for _, row in df.iterrows():
                     key = (protein_name, int(row["Z"]))
                     calibration_lookup.setdefault(key, []).append({
@@ -303,9 +301,8 @@ class DriftCalibrationProcessor:
                 # Get charge range for this protein
                 charge_range = charge_ranges.get(protein_name, (2, 4))
 
-                # Load mass spectrum once per protein
-                mass_spectrum_path = os.path.join(root, "mass_spectrum.txt")
-                ms_df = DriftCalibrationProcessor.load_mass_spectrum(mass_spectrum_path)
+                # Get mass spectrum from provided ms_data
+                ms_df = ms_data.get(protein_name, None)
                 protein_mass = protein_masses.get(protein_name, None)
 
                 # Process ATD files for each charge state
@@ -356,10 +353,13 @@ class DriftCalibrationProcessor:
                     
                     processed_files += 1
                     
+                    # Get smoothing window for this protein/charge (default to 51)
+                    smoothing_window = smoothing_params.get((protein_name, charge_state), 51)
+                    
                     # Calculate scaling factor from mass spectrum
                     scale_factor, mz = DriftCalibrationProcessor.calculate_scale_factor(
                         ms_df, protein_name, charge_state, protein_mass,
-                        scale_ranges, use_max_intensity
+                        scale_ranges, use_max_intensity, smoothing_window=smoothing_window
                     )
                     
                     # Skip if scale factor calculation failed
