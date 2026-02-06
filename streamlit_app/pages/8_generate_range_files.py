@@ -209,7 +209,8 @@ class RangeFileInterface:
             folder_name = "ranges"
         
         # Show m/z preview
-        mz = (mass + charge) / charge
+        PROTON_MASS = 1.007276
+        mz = (mass + PROTON_MASS * charge) / charge
         st.markdown(f"**m/z for charge {charge}+:** {mz:.2f}")
         
         st.markdown('</div>', unsafe_allow_html=True)
@@ -405,7 +406,8 @@ class RangeFileInterface:
         
         # Show detailed results
         with st.expander("📊 Detailed Information"):
-            mz = (params.mass + params.charge) / params.charge
+            PROTON_MASS = 1.007276
+            mz = (params.mass + params.charge * PROTON_MASS) / params.charge
             half_range = params.mz_range_size / 2.0
             
             for i, voltage in enumerate(result.charge_states):  # charge_states contains voltages for CIU

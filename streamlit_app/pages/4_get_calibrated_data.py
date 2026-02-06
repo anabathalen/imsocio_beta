@@ -68,9 +68,23 @@ def cached_plot_spectrum(
     show_zoomed: bool,
     _ms_df: pd.DataFrame
 ):
-    """Cached version of spectrum plotting."""
+    """Cached version of spectrum plotting - only loads relevant m/z range."""
+    # Determine the m/z window to plot
+    if show_zoomed:
+        mz_window_min = mz_theoretical * 0.90
+        mz_window_max = mz_theoretical * 1.10
+    else:
+        mz_window_min = _ms_df["m/z"].min()
+        mz_window_max = _ms_df["m/z"].max()
+    
+    # Only load data in the visible range - HUGE performance improvement
+    ms_df_filtered = _ms_df[
+        (_ms_df["m/z"] >= mz_window_min) & 
+        (_ms_df["m/z"] <= mz_window_max)
+    ].copy()
+    
     area, range_outside, fig = plot_spectrum_with_integration(
-        _ms_df,
+        ms_df_filtered,
         mz_theoretical,
         (range_min, range_max),
         smoothing_window=smoothing_window,
@@ -356,7 +370,6 @@ class UI:
                         st.session_state[f"range_max_{protein}_{charge}"] = auto_max
                         st.session_state[f"smoothing_{protein}_{charge}"] = default_smoothing
                     st.success(f"✅ Applied defaults to all {protein} charge states")
-                    st.rerun()
             
             # Create tabs for each charge state
             charges = list(range(min_charge, max_charge + 1))
@@ -433,13 +446,11 @@ class UI:
                                 auto_min, auto_max = get_automatic_range(mz, auto_percent)
                                 st.session_state[f"range_min_{protein}_{charge}"] = auto_min
                                 st.session_state[f"range_max_{protein}_{charge}"] = auto_max
-                                st.rerun()
                             
                             if update_button:
                                 st.session_state[f"range_min_{protein}_{charge}"] = range_min
                                 st.session_state[f"range_max_{protein}_{charge}"] = range_max
                                 st.session_state[f"smoothing_{protein}_{charge}"] = smoothing_window
-                                st.rerun()
                         
                         # Use values from session state for calculations
                         range_min = st.session_state[f"range_min_{protein}_{charge}"]
@@ -478,7 +489,7 @@ class UI:
                             st.warning("⚠ Could not calculate scale factor")
                     
                     with col2:
-                        # Plot with integration preview (always shown)
+                        # Plot with integration preview
                         show_zoomed = st.checkbox(
                             "Zoom to ±10%",
                             value=True,
@@ -505,10 +516,10 @@ class UI:
                             if use_max_intensity:
                                 st.info(f"Scale factor based on max intensity in range")
                             else:
-                                st.info(f"Integrated area (baseline-corrected): {area:.2e}")
-                            
-                            if range_outside:
-                                st.warning("⚠️ Integration range extends beyond visible spectrum")
+                                st.info(f"Integrated area: {area:.2e}")
+                        
+                        if range_outside:
+                            st.warning("⚠ Integration range extends beyond visible window")
         
         # Create DataFrame of scale factors
         scale_factors_df = pd.DataFrame(scale_factor_data) if scale_factor_data else None

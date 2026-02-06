@@ -157,7 +157,7 @@ class RangeFileGenerator:
     def calculate_mz(self, charge: int) -> float:
         """Calculate m/z for given charge state.
         
-        Uses the formula: m/z = (mass + charge) / charge
+        Uses the formula: m/z = (mass + charge * PROTON_MASS) / charge
         
         Args:
             charge: Charge state
@@ -171,7 +171,8 @@ class RangeFileGenerator:
         if charge <= 0:
             raise ValueError(f"Charge must be positive, got {charge}")
         
-        return (self.params.mass + charge) / charge
+        PROTON_MASS = 1.007276
+        return (self.params.mass + charge * PROTON_MASS) / charge
     
     def generate_range_content(self, charge: int) -> str:
         """Generate content for a single range file.
@@ -496,7 +497,8 @@ class CIURangeFileGenerator:
         Returns:
             Calculated m/z value
         """
-        return (self.params.mass + self.params.charge) / self.params.charge
+        PROTON_MASS = 1.007276
+        return (self.params.mass + self.params.charge * PROTON_MASS) / self.params.charge
     
     def calculate_voltage(self, voltage_index: int) -> float:
         """Calculate collision voltage for a given index.
@@ -553,6 +555,11 @@ class CIURangeFileGenerator:
         """
         mz = self.calculate_mz()
         half_range = self.params.mz_range_size / 2.0
+        
+        # Debug logging
+        logger.info(f"CIU Range Generation Debug:")
+        logger.info(f"  mass={self.params.mass}, charge={self.params.charge}, mz_range_size={self.params.mz_range_size}")
+        logger.info(f"  Calculated mz={mz}, half_range={half_range}")
         
         mz_start = mz - half_range
         mz_end = mz + half_range

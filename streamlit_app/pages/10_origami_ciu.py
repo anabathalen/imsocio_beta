@@ -1103,14 +1103,13 @@ if calibration_file and twim_file:
                     else:
                         ccs_edges = np.array([ccs_values[0] - 0.5, ccs_values[0] + 0.5])
                     
-                    X_edges, Y_edges = np.meshgrid(trap_cv_edges, ccs_edges)
-                    
+                    # Use shading='nearest' to match plotly's cell-centered behavior
                     im = ax.pcolormesh(
-                        X_edges,
-                        Y_edges,
+                        trap_cv_values,
+                        ccs_values,
                         intensity_matrix_final,
                         cmap=cmap,
-                        shading='flat'
+                        shading='nearest'
                     )
                     
                     # Set axis limits if specified
