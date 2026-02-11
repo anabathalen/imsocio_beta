@@ -327,7 +327,8 @@ class PlotStyler:
                 settings.get('x_label_text', 'm/z'),
                 fontsize=settings.get('axis_label_size', 14),
                 weight=settings.get('axis_label_weight', 'bold'),
-                fontfamily=settings.get('font_family', 'Arial')
+                fontfamily=settings.get('font_family', 'Arial'),
+                color=settings.get('axis_label_color', 'black')
             )
         
         if settings.get('show_y_label', True):
@@ -335,7 +336,8 @@ class PlotStyler:
                 settings.get('y_label_text', 'Intensity'),
                 fontsize=settings.get('axis_label_size', 14),
                 weight=settings.get('axis_label_weight', 'bold'),
-                fontfamily=settings.get('font_family', 'Arial')
+                fontfamily=settings.get('font_family', 'Arial'),
+                color=settings.get('axis_label_color', 'black')
             )
         
         # Tick labels
@@ -345,12 +347,15 @@ class PlotStyler:
             ax.set_yticklabels([])
         
         # Tick parameters
+        tick_color = settings.get('tick_color', 'black')
         ax.tick_params(
             labelsize=settings.get('tick_label_size', 12),
             bottom=settings.get('show_bottom_axis', True),
             top=settings.get('show_top_axis', False),
             left=settings.get('show_left_axis', True),
-            right=settings.get('show_right_axis', False)
+            right=settings.get('show_right_axis', False),
+            color=tick_color,
+            labelcolor=tick_color
         )
         
         # Apply font family to tick labels
@@ -371,9 +376,10 @@ class PlotStyler:
             ax.xaxis.set_major_locator(MultipleLocator(spacing))
         
         # Spines
+        spine_color = settings.get('tick_color', settings.get('spine_color', 'black'))
         for spine in ax.spines.values():
             spine.set_linewidth(settings.get('spine_width', 1.5))
-            spine.set_color(settings.get('spine_color', 'black'))
+            spine.set_color(spine_color)
     
     @staticmethod
     def get_color_palette(palette_name: str, n_colors: int) -> List[str]:
@@ -404,7 +410,14 @@ class SpectrumAnnotator:
         ax: plt.Axes,
         spectrum: SpectrumData,
         annotations: List[Dict[str, Any]],
-        y_max: float
+        y_max: float,
+        baseline: float = 0.0,
+        global_max_intensity: Optional[float] = None,
+        x_min: Optional[float] = None,
+        x_max: Optional[float] = None,
+        zoom: float = 1.0,
+        baseline_offset: float = 0.0,
+        settings: Optional[Dict[str, Any]] = None
     ) -> Tuple[List, List]:
         """Add annotations to spectrum plot and return legend entries.
         
@@ -413,6 +426,13 @@ class SpectrumAnnotator:
             spectrum: Spectrum data
             annotations: List of annotation dictionaries
             y_max: Maximum y-axis value
+            baseline: Baseline offset for the spectrum (for stacked plots)
+            global_max_intensity: Maximum intensity across all spectra (for consistent spacing)
+            x_min: Minimum x-axis value (for calculating max in visible range)
+            x_max: Maximum x-axis value (for calculating max in visible range)
+            zoom: Zoom factor applied to intensities
+            baseline_offset: Baseline offset value (negative for downward offset)
+            settings: Plot settings dictionary (for font family and weight)
             
         Returns:
             Tuple of (legend_handles, legend_labels)
@@ -424,7 +444,22 @@ class SpectrumAnnotator:
         legend_labels = []
         seen_labels = set()
         
-        max_intensity = spectrum.get_max_intensity()
+        # Use global max if provided, otherwise use spectrum's max
+        if global_max_intensity is not None:
+            max_intensity = global_max_intensity
+        else:
+            # Calculate max intensity in visible range if x limits provided
+            if x_min is not None and x_max is not None:
+                visible_mask = (spectrum.mz >= x_min) & (spectrum.mz <= x_max)
+                if np.any(visible_mask):
+                    max_intensity = np.max(spectrum.intensity[visible_mask])
+                else:
+                    max_intensity = spectrum.get_max_intensity()
+            else:
+                max_intensity = spectrum.get_max_intensity()
+        
+        # Apply zoom to max intensity for consistent spacing
+        max_intensity = max_intensity * zoom
         
         for annotation in annotations:
             if annotation.get('mode') == 'manual':
@@ -446,9 +481,21 @@ class SpectrumAnnotator:
                 peak_mz = peak_mzs[max_idx]
                 peak_intensity = peak_intensities[max_idx]
                 
-                # Safe annotation positioning
-                marker_y = peak_intensity + max_intensity * 0.05
-                label_y = marker_y + max_intensity * 0.03
+                # Find maximum intensity in ±50 m/z region around the peak
+                region_mask = (spectrum.mz >= peak_mz - 50) & (spectrum.mz <= peak_mz + 50)
+                if np.any(region_mask):
+                    region_max_intensity = np.max(spectrum.intensity[region_mask])
+                else:
+                    region_max_intensity = peak_intensity
+                
+                # Apply zoom and baseline offset to the intensities
+                peak_intensity = (peak_intensity * zoom) + baseline_offset + baseline
+                region_max_intensity = (region_max_intensity * zoom) + baseline_offset + baseline
+                
+                # Position annotations at 0.1x the overall maximum intensity above the regional max
+                # Then label at another 0.1x above that
+                marker_y = region_max_intensity + (0.1 * max_intensity)
+                label_y = marker_y + (0.1 * max_intensity)
                 
                 # Cap at reasonable positions
                 marker_y = min(marker_y, y_max * 0.9)
@@ -465,12 +512,16 @@ class SpectrumAnnotator:
                           edgecolor='black', linewidth=0.5, zorder=5)
                 
                 # Label configuration
+                font_family = settings.get('font_family', 'Arial') if settings else 'Arial'
+                annotation_weight = settings.get('annotation_weight', 'bold') if settings else 'bold'
+                
                 label_kwargs = {
                     'ha': 'center', 
                     'va': 'bottom', 
                     'fontsize': annotation.get('font_size', 12),
                     'color': annotation['color'], 
-                    'weight': annotation.get('weight', 'bold')
+                    'weight': annotation_weight,
+                    'fontfamily': font_family
                 }
                 
                 if annotation.get('show_label_border', False):
@@ -610,7 +661,8 @@ class MassSpectrumPlotter:
             
         elif plot_type == "stacked":
             num_spectra = len([s for s in spectra if len(s.intensity) > 0])
-            y_min = offset if offset < 0 else -0.1
+            # Stacked plots always need baseline at zero for proper visualization
+            y_min = -0.1
             y_max = 1.0 + (num_spectra - 1) * min(stack_offset, 2.0) + 0.5
             
         elif plot_type == "overlay":
@@ -711,16 +763,37 @@ class MassSpectrumPlotter:
             plot_settings.get('baseline_offset_percent', 5.0)
         )
         
+        # Calculate baseline offset for annotations
+        max_intensity = max([s.get_max_intensity() for s in spectra if len(s.intensity) > 0])
+        baseline_offset_percent = plot_settings.get('baseline_offset_percent', 5.0)
+        preserve_baseline = plot_settings.get('preserve_baseline', False)
+        baseline_offset = -max_intensity * (baseline_offset_percent / 100.0) if not preserve_baseline else 0
+        zoom = plot_settings.get('zoom', 1.0)
+        
+        # Track legend handles and labels from annotations
+        annotation_legend_handles = []
+        annotation_legend_labels = []
+        
         # Plot based on type
         if plot_type == "single":
             MassSpectrumPlotter._plot_single(ax, spectra[0], plot_settings, spectrum_colors[0])
             if annotations:
-                SpectrumAnnotator.add_annotations(ax, spectra[0], annotations, y_max)
+                handles, labels = SpectrumAnnotator.add_annotations(
+                    ax, spectra[0], annotations, y_max,
+                    x_min=x_min, x_max=x_max,
+                    zoom=zoom,
+                    baseline_offset=baseline_offset,
+                    settings=plot_settings
+                )
+                annotation_legend_handles.extend(handles)
+                annotation_legend_labels.extend(labels)
         
         elif plot_type == "stacked":
-            MassSpectrumPlotter._plot_stacked(
+            handles, labels = MassSpectrumPlotter._plot_stacked(
                 ax, spectra, plot_settings, spectrum_labels, spectrum_colors, annotations
             )
+            annotation_legend_handles.extend(handles)
+            annotation_legend_labels.extend(labels)
         
         elif plot_type == "overlay":
             MassSpectrumPlotter._plot_overlay(
@@ -728,7 +801,15 @@ class MassSpectrumPlotter:
             )
             # Add annotations for overlay plots (use first spectrum for reference)
             if annotations and len(spectra) > 0:
-                SpectrumAnnotator.add_annotations(ax, spectra[0], annotations, y_max)
+                handles, labels = SpectrumAnnotator.add_annotations(
+                    ax, spectra[0], annotations, y_max,
+                    x_min=x_min, x_max=x_max,
+                    zoom=zoom,
+                    baseline_offset=baseline_offset,
+                    settings=plot_settings
+                )
+                annotation_legend_handles.extend(handles)
+                annotation_legend_labels.extend(labels)
         
         elif plot_type == "mirror":
             MassSpectrumPlotter._plot_mirror(
@@ -736,7 +817,14 @@ class MassSpectrumPlotter:
             )
             # Add annotations for mirror plots (use first spectrum for reference)
             if annotations and len(spectra) > 0:
-                SpectrumAnnotator.add_annotations(ax, spectra[0], annotations, y_max)
+                handles, labels = SpectrumAnnotator.add_annotations(
+                    ax, spectra[0], annotations, y_max,
+                    zoom=zoom,
+                    baseline_offset=baseline_offset,
+                    settings=plot_settings
+                )
+                annotation_legend_handles.extend(handles)
+                annotation_legend_labels.extend(labels)
         
         # Add vertical lines
         if vertical_lines:
@@ -764,12 +852,16 @@ class MassSpectrumPlotter:
         
         # Legend
         if plot_settings.get('show_legend', False):
-            # Only show legend if there are multiple spectra or plot type requires it
-            if len(spectra) > 1 or plot_type in ["overlay", "stacked", "mirror"]:
+            # Only show annotation legend entries (protein masses), not file names
+            # If there are annotation entries, show only those
+            if annotation_legend_handles:
                 ax.legend(
+                    annotation_legend_handles, 
+                    annotation_legend_labels,
                     loc=plot_settings.get('legend_pos', 'best'),
                     frameon=plot_settings.get('legend_frame', True),
-                    fontsize=plot_settings.get('tick_label_size', 12)
+                    fontsize=plot_settings.get('tick_label_size', 12),
+                    prop={'family': plot_settings.get('font_family', 'Arial')}
                 )
         
         plt.tight_layout()
@@ -805,8 +897,12 @@ class MassSpectrumPlotter:
         labels: List[str],
         colors: List[str],
         annotations: List
-    ):
-        """Plot multiple spectra in stacked format."""
+    ) -> Tuple[List, List]:
+        """Plot multiple spectra in stacked format.
+        
+        Returns:
+            Tuple of (legend_handles, legend_labels) from annotations
+        """
         stack_offset = settings.get('stack_offset', 1.2)
         
         for i, (spectrum, label, color) in enumerate(zip(spectra, labels, colors)):
@@ -837,6 +933,51 @@ class MassSpectrumPlotter:
                     alpha=settings.get('fill_alpha', 0.2),
                     color=color
                 )
+        
+        # Add annotations for each spectrum separately
+        all_legend_handles = []
+        all_legend_labels = []
+        
+        if annotations and len(spectra) > 0:
+            y_min, y_max = ax.get_ylim()
+            x_min, x_max = ax.get_xlim()
+            
+            # Calculate global maximum intensity in visible range (before normalization)
+            global_max = 0.0
+            for spectrum in spectra:
+                if len(spectrum.intensity) > 0:
+                    visible_mask = (spectrum.mz >= x_min) & (spectrum.mz <= x_max)
+                    if np.any(visible_mask):
+                        spec_max = np.max(spectrum.intensity[visible_mask])
+                        global_max = max(global_max, spec_max)
+            
+            # Since all spectra are normalized to 1.0, use 1.0 as the reference
+            global_max_for_spacing = 1.0
+            
+            for i, spectrum in enumerate(spectra):
+                if len(spectrum.intensity) == 0:
+                    continue
+                
+                # Create offset spectrum for annotation positioning
+                offset_spectrum = SpectrumData(spectrum.mz.copy(), spectrum.intensity.copy(), spectrum.name)
+                offset_spectrum.normalize('max')
+                # Apply the same offset used for plotting
+                offset_spectrum.intensity = offset_spectrum.intensity + (i * stack_offset)
+                
+                # Add annotations for this spectrum with baseline at the offset position
+                baseline = i * stack_offset
+                handles, labels = SpectrumAnnotator.add_annotations(
+                    ax, offset_spectrum, annotations, y_max, baseline, 
+                    global_max_intensity=global_max_for_spacing,
+                    x_min=x_min, x_max=x_max,
+                    zoom=1.0,
+                    baseline_offset=0.0,
+                    settings=settings
+                )
+                all_legend_handles.extend(handles)
+                all_legend_labels.extend(labels)
+        
+        return all_legend_handles, all_legend_labels
     
     @staticmethod
     def _plot_overlay(

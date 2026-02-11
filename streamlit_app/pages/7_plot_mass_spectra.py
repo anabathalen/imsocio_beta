@@ -181,14 +181,32 @@ class MassSpectrumInterface:
         
         # Axis label settings
         st.markdown("**Axis Label Settings**")
-        col1, col2, col3 = st.columns(3)
+        col1, col2, col3, col4 = st.columns(4)
         
         with col1:
             axis_label_size = st.number_input("Axis label size:", 6, 24, 14, key="axis_size")
         with col2:
             axis_label_weight = st.selectbox("Axis label weight:", ["normal", "bold"], index=1, key="axis_weight")
         with col3:
-            pass  # Empty for spacing
+            use_custom_axis_label_color = st.checkbox("Custom axis label color (hex)", value=False)
+            if use_custom_axis_label_color:
+                axis_label_color = st.text_input(
+                    "Hex color for axis labels:",
+                    value="#000000",
+                    help="Enter color in hex format, e.g., #0000FF for blue"
+                )
+            else:
+                axis_label_color = "black"
+        with col4:
+            use_custom_tick_color = st.checkbox("Custom tick/spine color (hex)", value=False)
+            if use_custom_tick_color:
+                tick_color = st.text_input(
+                    "Hex color for ticks:",
+                    value="#000000",
+                    help="Enter color in hex format, e.g., #000000 for black"
+                )
+            else:
+                tick_color = "black"
         
         st.markdown("---")
         
@@ -197,7 +215,19 @@ class MassSpectrumInterface:
         col1, col2, col3, col4 = st.columns(4)
         
         with col1:
-            line_color = st.selectbox("Line color:", ["black", "blue", "red", "green", "purple", "orange", "brown"])
+            use_black_lines = st.checkbox("Use black lines for all spectra", value=False)
+            use_custom_line_color = st.checkbox("Use custom line color (hex)", value=False)
+            
+            if use_black_lines:
+                line_color = "black"
+            elif use_custom_line_color:
+                line_color = st.text_input(
+                    "Hex color for lines:",
+                    value="#000000",
+                    help="Enter color in hex format, e.g., #0000FF for blue"
+                )
+            else:
+                line_color = st.selectbox("Line color:", ["black", "blue", "red", "green", "purple", "orange", "brown"])
         with col2:
             line_width = st.number_input("Line width:", 0.1, 5.0, 1.5, 0.1)
         with col3:
@@ -218,11 +248,14 @@ class MassSpectrumInterface:
             'title_weight': title_weight,
             'axis_label_size': axis_label_size,
             'axis_label_weight': axis_label_weight,
+            'axis_label_color': axis_label_color,
+            'tick_color': tick_color,
             'background': background,
             'line_color': line_color,
             'line_width': line_width,
             'line_style': line_style,
-            'alpha': alpha
+            'alpha': alpha,
+            'use_black_lines': use_black_lines
         }
     
     @staticmethod
@@ -271,24 +304,13 @@ class MassSpectrumInterface:
                     stack_offset = st.slider("Stack offset:", 0.5, 3.0, 1.2)
                 else:
                     stack_offset = 1.2
-                
-                show_legend = st.checkbox("Show legend", value=True)
-                if show_legend:
-                    legend_pos = st.selectbox("Legend position:", ["best", "upper right", "upper left", "lower right", "lower left"])
-                    legend_frame = st.checkbox("Legend frame", value=True)
-                else:
-                    legend_pos = "best"
-                    legend_frame = True
             
             settings.update({
                 'fill_under': fill_under,
                 'fill_alpha': fill_alpha,
                 'palette': palette,
                 'line_color_2': line_color_2,
-                'stack_offset': stack_offset,
-                'show_legend': show_legend,
-                'legend_pos': legend_pos,
-                'legend_frame': legend_frame
+                'stack_offset': stack_offset
             })
         
         return settings
@@ -498,15 +520,43 @@ class MassSpectrumInterface:
         return settings
     
     @staticmethod
-    def show_peak_labeling() -> List[Dict[str, Any]]:
+    def show_peak_labeling() -> tuple:
         """Show peak labeling/annotation options.
         
         Returns:
-            List of annotation dictionaries
+            Tuple of (annotations list, annotation_weight)
         """
         annotations = []
         
         with st.expander("🏷️ Peak Labeling", expanded=True):
+            st.markdown("### Annotation Settings")
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                annotation_weight = st.selectbox(
+                    "Annotation font weight:",
+                    ["normal", "bold"],
+                    index=1,
+                    key="annotation_weight",
+                    help="Font weight for all annotation labels"
+                )
+            with col2:
+                show_legend = st.checkbox("Show legend", value=True, help="Show legend with protein masses")
+            with col3:
+                if show_legend:
+                    legend_pos = st.selectbox("Legend position:", ["best", "upper right", "upper left", "lower right", "lower left"])
+                else:
+                    legend_pos = "best"
+            
+            if show_legend:
+                col1, col2 = st.columns(2)
+                with col1:
+                    legend_frame = st.checkbox("Legend frame", value=True)
+                with col2:
+                    pass
+            else:
+                legend_frame = True
+            
+            st.markdown("---")
             st.markdown("### Label Specific m/z Values")
             
             # Manual m/z labeling
@@ -557,11 +607,24 @@ class MassSpectrumInterface:
                         ["o", "v", "^", "s", "D", "*", "p", "h"],
                         key=f"manual_shape_{i}"
                     )
-                    marker_color = st.selectbox(
-                        f"Color:",
-                        ["red", "blue", "green", "purple", "orange", "black", "cyan", "magenta"],
-                        key=f"manual_color_{i}"
+                    use_custom_color = st.checkbox(
+                        "Use custom color (hex)",
+                        value=False,
+                        key=f"manual_custom_color_{i}"
                     )
+                    if use_custom_color:
+                        marker_color = st.text_input(
+                            f"Hex color:",
+                            value="#FF0000",
+                            key=f"manual_color_hex_{i}",
+                            help="Enter color in hex format, e.g., #FF0000 for red"
+                        )
+                    else:
+                        marker_color = st.selectbox(
+                            f"Color:",
+                            ["red", "blue", "green", "purple", "orange", "black", "cyan", "magenta"],
+                            key=f"manual_color_{i}"
+                        )
                 
                 with col4:
                     marker_size = st.number_input(
@@ -666,12 +729,26 @@ class MassSpectrumInterface:
                         key=f"charge_shape_{series_idx}"
                     )
                     
-                    charge_marker_color = st.selectbox(
-                        f"Marker color:",
-                        ["red", "blue", "green", "purple", "orange", "black", "cyan", "magenta"],
-                        index=series_idx % 8,
-                        key=f"charge_color_{series_idx}"
+                    use_custom_charge_color = st.checkbox(
+                        f"Use custom color (hex)",
+                        value=False,
+                        key=f"charge_custom_color_{series_idx}"
                     )
+                    
+                    if use_custom_charge_color:
+                        charge_marker_color = st.text_input(
+                            f"Hex color:",
+                            value="#FF0000",
+                            key=f"charge_color_hex_{series_idx}",
+                            help="Enter color in hex format, e.g., #FF0000 for red"
+                        )
+                    else:
+                        charge_marker_color = st.selectbox(
+                            f"Marker color:",
+                            ["red", "blue", "green", "purple", "orange", "black", "cyan", "magenta"],
+                            index=series_idx % 8,
+                            key=f"charge_color_{series_idx}"
+                        )
                     
                     charge_marker_size = st.number_input(
                         f"Marker size:",
@@ -719,11 +796,22 @@ class MassSpectrumInterface:
                     key=f"charge_border_{series_idx}"
                 )
                 
+                add_mass_to_legend = st.checkbox(
+                    f"Add mass to legend",
+                    value=True,
+                    key=f"charge_legend_{series_idx}",
+                    help="Add an entry to the legend showing the protein mass in the color of the charge state labels"
+                )
+                
                 # Generate annotations for each charge state in this series
-                for charge in range(min_charge, max_charge + 1):
+                for idx, charge in enumerate(range(min_charge, max_charge + 1)):
                     theoretical_mz = calculate_theoretical_mz(protein_mass, charge)
                     
                     label_text = f"{label_prefix}{charge}+" if label_prefix else f"{charge}+"
+                    
+                    # Only add the first charge state to legend to show the mass
+                    add_to_legend = (idx == 0) and add_mass_to_legend
+                    legend_label = f"{protein_mass:.1f} Da" if add_to_legend else ""
                     
                     annotations.append({
                         'mode': 'manual',
@@ -737,14 +825,20 @@ class MassSpectrumInterface:
                         'font_size': charge_font_size,
                         'show_line': charge_show_line,
                         'show_label_border': charge_show_border,
-                        'add_to_legend': False,
-                        'legend_label': ""
+                        'add_to_legend': add_to_legend,
+                        'legend_label': legend_label
                     })
                 
                 if series_idx < num_charge_series - 1:
                     st.markdown("---")
         
-        return annotations if annotations else None
+        legend_settings = {
+            'show_legend': show_legend,
+            'legend_pos': legend_pos,
+            'legend_frame': legend_frame
+        }
+        
+        return annotations if annotations else None, annotation_weight, legend_settings
 
 
 def main():
@@ -787,7 +881,9 @@ def main():
     figure_settings.update(title_settings)
     
     # Step 8: Peak labeling
-    annotations = MassSpectrumInterface.show_peak_labeling()
+    annotations, annotation_weight, legend_settings = MassSpectrumInterface.show_peak_labeling()
+    figure_settings['annotation_weight'] = annotation_weight
+    figure_settings.update(legend_settings)
     
     # Step 9: Generate plot
     st.markdown('<div class="section-card">', unsafe_allow_html=True)
@@ -819,6 +915,12 @@ def main():
         }
         
         # Create plot
+        # Determine spectrum colors based on settings
+        if figure_settings.get('use_black_lines', False):
+            spectrum_colors = ['black'] * len(spectra)
+        else:
+            spectrum_colors = None  # Will use default color cycle
+        
         result = MassSpectrumPlotter.create_plot(
             spectra,
             figure_settings,
@@ -826,7 +928,7 @@ def main():
             plot_type=plot_type_map[plot_type],
             spectrum_labels=[s.name for s in spectra],
             vertical_lines=None,
-            spectrum_colors=None
+            spectrum_colors=spectrum_colors
         )
         
         if result:

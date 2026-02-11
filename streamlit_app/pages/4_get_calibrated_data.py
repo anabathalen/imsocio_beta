@@ -58,7 +58,7 @@ def cached_calculate_scale_factor(
     return scale_factor, mz
 
 
-@st.cache_data
+@st.cache_data(ttl=3600, max_entries=50)
 def cached_plot_spectrum(
     ms_data_hash: str,
     mz_theoretical: float,
@@ -91,6 +91,14 @@ def cached_plot_spectrum(
         show_zoomed=show_zoomed
     )
     return area, range_outside, fig
+
+
+@st.cache_data(ttl=3600)
+def load_and_hash_ms_data(_ms_df: pd.DataFrame, protein: str) -> str:
+    """Cache the hash calculation for MS data - uses dataframe ID as cache key."""
+    # Use first/last values and shape as a lighter fingerprint
+    fingerprint = f"{protein}_{_ms_df.shape}_{_ms_df.iloc[0, 0] if len(_ms_df) > 0 else 0}"
+    return hashlib.md5(fingerprint.encode()).hexdigest()
 
 
 class UI:
@@ -307,14 +315,12 @@ class UI:
             if protein not in ms_data or protein_masses.get(protein, 0) == 0:
                 continue
             
-            # Compute hash only once per protein
-            if protein not in st.session_state.ms_hashes:
-                st.session_state.ms_hashes[protein] = hashlib.md5(
-                    ms_data[protein].to_json().encode()
-                ).hexdigest()
-            
             st.markdown(f"#### {protein}")
             ms_df = ms_data[protein]
+            
+            # Compute hash only once per protein using cached function
+            if protein not in st.session_state.ms_hashes:
+                st.session_state.ms_hashes[protein] = load_and_hash_ms_data(ms_df, protein)
             ms_hash = st.session_state.ms_hashes[protein]
             mass = protein_masses[protein]
             min_charge, max_charge = charge_ranges.get(protein, (2, 4))

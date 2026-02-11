@@ -338,27 +338,43 @@ def main():
     
     # Multiple file upload
     use_multiple = st.checkbox("Upload multiple files for subplot comparison", value=False)
+    replicate_mode = st.checkbox(
+        "Replicate analysis mode (plot mean ± std deviation)",
+        value=False,
+        help="Upload multiple replicates of the same sample from different days. The data will be normalized and averaged."
+    )
     combine_on_same_axes = False
     
     if use_multiple:
-        cal_files = st.file_uploader(
-            "Upload calibrated & scaled CSV files",
-            type="csv",
-            accept_multiple_files=True
-        )
+        # Disable replicate mode and subplot/combined options when incompatible
+        if replicate_mode:
+            st.info("ℹ️ Replicate analysis mode: Upload multiple replicates of the same sample. They will be normalized and averaged.")
+            cal_files = st.file_uploader(
+                "Upload calibrated & scaled CSV files (replicates from different days)",
+                type="csv",
+                accept_multiple_files=True
+            )
+            combine_on_same_axes = False  # Not applicable in replicate mode
+        else:
+            cal_files = st.file_uploader(
+                "Upload calibrated & scaled CSV files",
+                type="csv",
+                accept_multiple_files=True
+            )
+            
+            # Option to combine on same axes
+            combine_on_same_axes = st.checkbox(
+                "Combine all datasets on same axes (instead of subplots)",
+                value=False,
+                help="Show multiple species overlaid on a single plot"
+            )
         
         if not cal_files or len(cal_files) == 0:
             st.info("Please upload one or more calibrated & scaled CSV files to continue.")
             return
         
-        # Option to combine on same axes
-        combine_on_same_axes = st.checkbox(
-            "Combine all datasets on same axes (instead of subplots)",
-            value=False,
-            help="Show multiple species overlaid on a single plot"
-        )
-        
-        if not combine_on_same_axes:
+        # Only disable combine option in replicate mode
+        if not replicate_mode and not combine_on_same_axes:
             # Layout selection for subplots
             layout = st.radio(
                 "Subplot layout",
@@ -368,6 +384,7 @@ def main():
         else:
             layout = "vertical"  # Doesn't matter for combined plot
     else:
+        replicate_mode = False  # Single file cannot be replicate mode
         cal_file = st.file_uploader(
             "Upload calibrated & scaled CSV file",
             type="csv"
@@ -400,8 +417,8 @@ def main():
         st.error("No valid datasets loaded.")
         return
     
-    # Step 1.5: Reorder plots (only for subplots, not combined)
-    if use_multiple and len(datasets) > 1 and not combine_on_same_axes:
+    # Step 1.5: Reorder plots (only for subplots, not combined or replicate mode)
+    if use_multiple and len(datasets) > 1 and not combine_on_same_axes and not replicate_mode:
         st.markdown("""
         <div class="section-card">
             <div class="section-header">🔢 Reorder Plots</div>
@@ -436,8 +453,8 @@ def main():
             st.error("Invalid input. Using default order.")
             order_indices = list(range(len(datasets)))
     
-    # Step 1.6: Customize titles (only for multiple files)
-    if use_multiple and len(datasets) > 1:
+    # Step 1.6: Customize titles (only for multiple files, not replicate mode)
+    if use_multiple and len(datasets) > 1 and not replicate_mode:
         st.markdown("""
         <div class="section-card">
             <div class="section-header">✏️ Customize Subplot Titles</div>
@@ -476,6 +493,11 @@ def main():
             title_map = {name: None for name, _, _ in datasets}
             title_fontsize = 14
             title_fontweight = "bold"
+    else:
+        # Set defaults when title section is skipped
+        title_fontsize = 14
+        title_fontweight = "bold"
+        title_map = {}
     
     # Step 2: Select charge states or total CCSD
     st.markdown("""
@@ -488,14 +510,19 @@ def main():
     show_only_total = st.checkbox(
         "Show only total CCSD (sum of all charge states)",
         value=False,
-        help="Display the sum of all charge states instead of individual traces"
+        help="Display the sum of all charge states instead of individual traces",
+        disabled=replicate_mode  # Disable in replicate mode as it shows individual charges
     )
+    
+    if replicate_mode and show_only_total:
+        st.warning("⚠️ 'Show only total CCSD' is not compatible with replicate analysis mode. Showing individual charge states.")
+        show_only_total = False
     
     # Dictionary to store selected charges per dataset
     dataset_charges = {}
     
     if not show_only_total:
-        if use_multiple and len(datasets) > 1 and not combine_on_same_axes:
+        if use_multiple and len(datasets) > 1 and not combine_on_same_axes and not replicate_mode:
             # Multiple datasets - allow different charges per subplot
             st.info("Select charge states for each subplot independently")
             
@@ -516,9 +543,11 @@ def main():
                 
                 dataset_charges[name] = selected
         else:
-            # Single dataset or combined axes - use single multiselect
+            # Single dataset, combined axes, or replicate mode - use single multiselect
             if combine_on_same_axes:
                 st.info("Select charge states to show for all datasets (same selection applies to all)")
+            elif replicate_mode:
+                st.info("Select charge states for replicate analysis (same selection applies to all replicates)")
             
             name, ccsd_data, _ = datasets[0]
             all_charges = sorted(ccsd_data.get_charge_states())
@@ -533,8 +562,8 @@ def main():
                 st.warning("Please select at least one charge state.")
                 return
             
-            # Apply same selection to all datasets if combining
-            if combine_on_same_axes:
+            # Apply same selection to all datasets if combining or in replicate mode
+            if combine_on_same_axes or replicate_mode:
                 for name, _, _ in datasets:
                     dataset_charges[name] = selected_charges
             else:
@@ -552,6 +581,7 @@ def main():
             st.dataframe(filtered_df)
     
     # Step 3: Gaussian fits (optional) - can upload multiple matching files
+    # Not applicable in replicate mode
     st.markdown("""
     <div class="section-card">
         <div class="section-header">📊 Optional Gaussian Fits (From Fit Data)</div>
@@ -559,49 +589,54 @@ def main():
     """, unsafe_allow_html=True)
     
     gaussian_datasets = []
-    show_gaussian_fits = st.checkbox("Overlay Gaussian fits", value=False)
+    show_gaussian_fits = False
     shade_gaussians = False
     
-    if show_gaussian_fits:
-        if use_multiple:
-            fits_files = st.file_uploader(
-                "Upload Gaussian fits CSV files (headings Amplitude/Center_CCS/Sigma) generated in the fit data page",
-                type="csv",
-                key="fits_csv",
-                accept_multiple_files=True
-            )
-            
-            if fits_files:
-                for fits_file in fits_files:
+    if replicate_mode:
+        st.info("ℹ️ Gaussian fits are not available in replicate analysis mode")
+    else:
+        show_gaussian_fits = st.checkbox("Overlay Gaussian fits", value=False)
+        
+        if show_gaussian_fits:
+            if use_multiple:
+                fits_files = st.file_uploader(
+                    "Upload Gaussian fits CSV files (headings Amplitude/Center_CCS/Sigma) generated in the fit data page",
+                    type="csv",
+                    key="fits_csv",
+                    accept_multiple_files=True
+                )
+                
+                if fits_files:
+                    for fits_file in fits_files:
+                        gaussian_data = DataLoader.load_gaussian_fits(fits_file)
+                        if gaussian_data is not None:
+                            # Filter to selected charges
+                            gaussian_data.df = gaussian_data.filter_charges(selected_charges)
+                            if not gaussian_data.df.empty:
+                                # Match by filename
+                                fits_name = fits_file.name.rsplit('.', 1)[0]
+                                gaussian_datasets.append((fits_name, gaussian_data))
+            else:
+                fits_file = st.file_uploader(
+                    "Upload Gaussian fits CSV files (headings Amplitude/Center_CCS/Sigma) generated in the fit data page",
+                    type="csv",
+                    key="fits_csv"
+                )
+                
+                if fits_file:
                     gaussian_data = DataLoader.load_gaussian_fits(fits_file)
                     if gaussian_data is not None:
-                        # Filter to selected charges
                         gaussian_data.df = gaussian_data.filter_charges(selected_charges)
                         if not gaussian_data.df.empty:
-                            # Match by filename
-                            fits_name = fits_file.name.rsplit('.', 1)[0]
-                            gaussian_datasets.append((fits_name, gaussian_data))
-        else:
-            fits_file = st.file_uploader(
-                "Upload Gaussian fits CSV files (headings Amplitude/Center_CCS/Sigma) generated in the fit data page",
-                type="csv",
-                key="fits_csv"
-            )
+                            dataset_name = datasets[0][0]
+                            gaussian_datasets.append((dataset_name, gaussian_data))
             
-            if fits_file:
-                gaussian_data = DataLoader.load_gaussian_fits(fits_file)
-                if gaussian_data is not None:
-                    gaussian_data.df = gaussian_data.filter_charges(selected_charges)
-                    if not gaussian_data.df.empty:
-                        dataset_name = datasets[0][0]
-                        gaussian_datasets.append((dataset_name, gaussian_data))
-        
-        if gaussian_datasets:
-            shade_gaussians = st.checkbox(
-                "Shade under Gaussian components",
-                value=False,
-                key="shade_gaussian_components"
-            )
+            if gaussian_datasets:
+                shade_gaussians = st.checkbox(
+                    "Shade under Gaussian components",
+                    value=False,
+                    key="shade_gaussian_components"
+                )
     
     # Step 4: Plot options
     basic_opts = PlotOptionsUI.show_basic_options()
@@ -615,6 +650,9 @@ def main():
     if show_only_total or combine_on_same_axes:
         # For total CCSD or combined axes, one color per dataset
         max_charges = len(datasets)
+    elif replicate_mode:
+        # For replicate mode, one color per charge state
+        max_charges = len(selected_charges)
     else:
         # Get all unique charges across all datasets
         all_unique_charges = set()
@@ -691,7 +729,41 @@ def main():
     """, unsafe_allow_html=True)
     
     try:
-        if combine_on_same_axes and len(datasets) > 1:
+        if replicate_mode and use_multiple and len(datasets) > 1:
+            # Replicate analysis mode: normalize and average across replicates
+            st.info(f"📊 Replicate Analysis: Showing mean ± std deviation (n={len(datasets)} replicates)")
+            
+            # Prepare data for plotting - use the same charge states for all
+            plot_datasets = [
+                (name, ccsd_data, dataset_charges[name])
+                for name, ccsd_data, _ in datasets
+            ]
+            
+            fig, maxima_info, font_warning = CCSDPlotter.plot_replicate_ccsds(
+                datasets=plot_datasets,
+                settings=settings
+            )
+            
+            # Display font warning if any
+            if font_warning:
+                st.warning(font_warning)
+            
+            # Display plot
+            st.pyplot(fig)
+            
+            # Show maxima information
+            st.markdown("#### 📍 Local Maxima in Mean Trace (CCS, Normalized Intensity)")
+            for label, maxima in maxima_info.items():
+                if maxima:
+                    maxima_str = ", ".join([
+                        f"({ccs:.1f}, {val:.2f})"
+                        for ccs, val in maxima
+                    ])
+                    st.write(f"**{label}:** {maxima_str}")
+                else:
+                    st.write(f"**{label}:** None found")
+        
+        elif combine_on_same_axes and len(datasets) > 1:
             # Combined mode: show multiple datasets on same axes
             st.info("📊 Showing multiple datasets on same axes")
             

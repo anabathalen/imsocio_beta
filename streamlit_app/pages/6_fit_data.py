@@ -806,6 +806,12 @@ def main():
             st.session_state['fit_ccs_min'] = ccs_min_raw
         if 'fit_ccs_max' not in st.session_state:
             st.session_state['fit_ccs_max'] = ccs_max_raw
+        
+        # Validate and reset session state if out of bounds
+        if st.session_state['fit_ccs_min'] < ccs_min_raw or st.session_state['fit_ccs_min'] > ccs_max_raw:
+            st.session_state['fit_ccs_min'] = ccs_min_raw
+        if st.session_state['fit_ccs_max'] > ccs_max_raw or st.session_state['fit_ccs_max'] < ccs_min_raw:
+            st.session_state['fit_ccs_max'] = ccs_max_raw
             
         ccs_min = st.number_input(
             "Minimum CCS:",
@@ -1055,11 +1061,14 @@ def main():
     </div>
     """, unsafe_allow_html=True)
     
-    if mode == "Individual Charge State":
-        col1, col2 = st.columns([3, 1])
-        with col1:
+    col1, col2 = st.columns([3, 1])
+    with col1:
+        if mode == "Individual Charge State":
             st.write(f"Save the fit results for **Charge {selected_charge}** to include in the final export.")
-        with col2:
+        else:
+            st.write(f"Save the fit results for **Summed Data** to include in the final export.")
+    with col2:
+        if mode == "Individual Charge State":
             if st.button(f"💾 **Save Charge {selected_charge}**", type="primary", use_container_width=True):
                 st.session_state['all_charge_results'][selected_charge] = {
                     'fit_result': st.session_state['fit_result'].copy(),
@@ -1074,14 +1083,33 @@ def main():
                 }
                 st.success(f"✅ Saved results for Charge {selected_charge}!")
                 st.rerun()
-    else:
-        st.info("💡 Summed data results are not saved. Switch to Individual Charge State mode to save results for export.")
+        else:
+            if st.button(f"💾 **Save Summed Data**", type="primary", use_container_width=True):
+                st.session_state['all_charge_results']['summed'] = {
+                    'fit_result': st.session_state['fit_result'].copy(),
+                    'peak_stats': st.session_state.get('peak_stats', []),
+                    'fitting_options': st.session_state['fitting_options'].copy(),
+                    'parameter_manager': st.session_state['parameter_manager'],
+                    'data_info': {
+                        'charge': 'summed',
+                        'n_points': len(plot_data),
+                        'ccs_range': (plot_data['CCS'].min(), plot_data['CCS'].max())
+                    }
+                }
+                st.success(f"✅ Saved results for Summed Data!")
+                st.rerun()
     
     # Show saved results summary
     if st.session_state['all_charge_results']:
         st.markdown("#### 📋 Saved Results Summary")
         summary_data = []
-        for charge in sorted(st.session_state['all_charge_results'].keys()):
+        
+        # Sort keys: numeric charges first, then 'summed' at the end
+        sorted_keys = sorted([k for k in st.session_state['all_charge_results'].keys() if k != 'summed'])
+        if 'summed' in st.session_state['all_charge_results']:
+            sorted_keys.append('summed')
+        
+        for charge in sorted_keys:
             result_data = st.session_state['all_charge_results'][charge]
             peak_stats = result_data.get('peak_stats', [])
             
@@ -1102,8 +1130,11 @@ def main():
             
             fit_result = result_data.get('fit_result', {})
             r_squared = fit_result.get('r_squared', 0.0)
+            
+            # Display "Summed" with capital S for better readability
+            display_charge = "Summed" if charge == 'summed' else charge
             summary_data.append({
-                'Charge': charge,
+                'Charge': display_charge,
                 'Peaks': n_peaks,
                 'R²': f"{r_squared:.4f}"
             })

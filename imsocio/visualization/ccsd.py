@@ -1114,6 +1114,187 @@ class CCSDPlotter:
         return fig, all_maxima_info, font_warning
     
     @staticmethod
+    def plot_replicate_ccsds(
+        datasets: list[tuple[str, CCSDData, list[int]]],
+        settings: PlotSettings
+    ) -> tuple[plt.Figure, dict, str]:
+        """Plot mean ± standard deviation of replicate CCSD measurements.
+        
+        Normalizes each replicate so that the maximum intensity across all charge
+        states equals 1, then computes mean and standard deviation at each CCS point.
+        Plots mean as a line with ±1 std deviation as a shaded region.
+        
+        Args:
+            datasets: List of tuples (name, ccsd_data, selected_charges)
+            settings: Plot customization settings
+            
+        Returns:
+            Tuple of (matplotlib figure, maxima_info dictionary, font_warning)
+        """
+        # Validate font
+        font_to_use, font_warning = validate_font(settings.font_family, fallback='DejaVu Sans')
+        
+        if len(datasets) < 2:
+            raise ValueError("Replicate analysis requires at least 2 datasets")
+        
+        # Create figure
+        fig, ax = plt.subplots(
+            figsize=(settings.fig_width, settings.fig_height),
+            dpi=settings.fig_dpi
+        )
+        plt.rcParams.update({'font.family': font_to_use})
+        
+        # Create CCS grid for interpolation
+        ccs_grid = np.arange(settings.ccs_min, settings.ccs_max + 1, 1.0)
+        y_col = settings.get_intensity_column()
+        
+        # Get all unique charge states from first dataset
+        # (assuming all replicates have the same charge states)
+        _, first_ccsd_data, selected_charges = datasets[0]
+        
+        # Store normalized traces for each replicate and charge state
+        # Structure: {charge: [replicate1_trace, replicate2_trace, ...]}
+        charge_replicate_traces = {charge: [] for charge in selected_charges}
+        
+        # Process each replicate
+        for name, ccsd_data, charges in datasets:
+            cal_df = ccsd_data.filter_charges(charges)
+            
+            # Interpolate all charge states first, then normalize by total intensity
+            replicate_traces = {}
+            
+            for charge in charges:
+                charge_df = cal_df[cal_df["Charge"] == charge].sort_values("CCS")
+                
+                if len(charge_df) == 0:
+                    # No data for this charge state, use zeros
+                    replicate_traces[charge] = np.zeros_like(ccs_grid)
+                    continue
+                
+                # Interpolate onto grid (not normalized yet)
+                y_values = charge_df[y_col]
+                interp = np.interp(
+                    ccs_grid,
+                    charge_df["CCS"],
+                    y_values,
+                    left=0,
+                    right=0
+                )
+                replicate_traces[charge] = interp
+            
+            # Calculate total scaled intensity (sum across all charge states and CCS points)
+            # This is equivalent to the integral under the summed CCSD curve
+            total_intensity = sum(replicate_traces.values()).sum()
+            
+            if total_intensity == 0:
+                raise ValueError(f"Dataset '{name}' has zero total intensity")
+            
+            # Normalize all traces by the total intensity
+            for charge in charges:
+                normalized_trace = replicate_traces[charge] / total_intensity
+                charge_replicate_traces[charge].append(normalized_trace)
+        
+        # Calculate mean and std for each charge state and plot
+        maxima_info = {}
+        
+        for i, charge in enumerate(selected_charges):
+            # Stack all replicate traces for this charge
+            traces = np.array(charge_replicate_traces[charge])
+            
+            if len(traces) == 0:
+                continue
+            
+            # Calculate mean and std across replicates (axis 0)
+            mean_trace = np.mean(traces, axis=0)
+            std_trace = np.std(traces, axis=0)
+            
+            # Get color for this charge state
+            color_idx = i % len(settings.trace_colors)
+            color = settings.trace_colors[color_idx]
+            if settings.black_lines:
+                color = 'black'
+            
+            # Plot mean line
+            label = f"Charge {charge}+ (n={len(datasets)})"
+            ax.plot(
+                ccs_grid,
+                mean_trace,
+                color=color,
+                linewidth=settings.line_thickness,
+                label=label
+            )
+            
+            # Shade ±1 std deviation
+            ax.fill_between(
+                ccs_grid,
+                mean_trace - std_trace,
+                mean_trace + std_trace,
+                color=color,
+                alpha=0.2,
+                linewidth=0
+            )
+            
+            # Find local maxima in mean trace
+            # Use window of 5 points for maxima detection
+            maxima_indices = argrelextrema(mean_trace, np.greater, order=5)[0]
+            maxima = [(ccs_grid[idx], mean_trace[idx]) for idx in maxima_indices]
+            maxima_info[label] = maxima
+        
+        # Add vertical dashed lines and labels for CCS values
+        if settings.ccs_label_values:
+            y_max = ax.get_ylim()[1]
+            y_label = settings.label_vertical_pos * y_max
+            
+            for ccs_value in settings.ccs_label_values:
+                # Draw dashed line
+                if settings.show_dashed_lines:
+                    ax.axvline(
+                        ccs_value,
+                        color="black",
+                        linewidth=1.0,
+                        linestyle="--"
+                    )
+                
+                # Add label
+                if settings.show_ccs_labels:
+                    ax.text(
+                        ccs_value + settings.label_horizontal_offset,
+                        y_label,
+                        f"{ccs_value:.1f}",
+                        rotation=90 if settings.label_orientation == "Vertical" else 0,
+                        verticalalignment='top' if settings.label_orientation == "Vertical" else 'center',
+                        horizontalalignment='right' if settings.label_orientation == "Vertical" else 'center',
+                        fontsize=settings.font_size,
+                        color="black",
+                        backgroundcolor="white" if not settings.bg_transparent else "none"
+                    )
+        
+        # Set axes properties to match other plots
+        ax.set_xlim([settings.ccs_min, settings.ccs_max])
+        ax.set_xlabel("CCS (Å²)", fontsize=settings.font_size)
+        ax.set_yticks([])
+        ax.grid(False)
+        
+        for label in ax.get_xticklabels():
+            label.set_fontsize(settings.font_size)
+        
+        for spine in ax.spines.values():
+            spine.set_edgecolor("black")
+            spine.set_linewidth(1.5)
+        
+        # Add legend
+        ax.legend(fontsize=settings.font_size, frameon=False)
+        
+        # Apply background transparency
+        if settings.bg_transparent:
+            fig.patch.set_alpha(0)
+            ax.patch.set_alpha(0)
+        
+        plt.tight_layout()
+        
+        return fig, maxima_info, font_warning
+    
+    @staticmethod
     def save_figure_to_buffer(
         fig: plt.Figure,
         dpi: int = 300,
