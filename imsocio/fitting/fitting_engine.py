@@ -239,39 +239,40 @@ class FittingEngine:
         for i in range(n_peaks):
             base_idx = i * params_per_peak
             
-            # Amplitude bounds
+            # Amplitude bounds - tighter to prevent unrealistic values
             amp = abs(initial_params[base_idx])
-            bounds_lower.append(max(0.001, amp * 0.001))  # Minimum positive value
-            bounds_upper.append(max(amp * 100, 1.0))  # Ensure upper > lower
+            bounds_lower.append(max(0.001, amp * 0.01))  # Minimum 1% of initial
+            bounds_upper.append(max(amp * 10, 1.0))  # Max 10x initial (not 100x)
             
-            # Center bounds
+            # Center bounds - restrict to data range (not beyond)
             center = initial_params[base_idx + 1]
             x_span = abs(x_range[1] - x_range[0])
-            bounds_lower.append(x_range[0] - x_span * 0.1)
-            bounds_upper.append(x_range[1] + x_span * 0.1)
+            # Only allow 2% margin to prevent peaks wandering to weird places
+            bounds_lower.append(x_range[0] - x_span * 0.02)
+            bounds_upper.append(x_range[1] + x_span * 0.02)
             
             # Width bounds (different for each peak type)
             if self.peak_type in ["Gaussian", "Lorentzian"]:
                 width = abs(initial_params[base_idx + 2])
-                width = max(width, x_span * 0.001)  # Ensure reasonable minimum
-                bounds_lower.append(width * 0.01)
-                bounds_upper.append(width * 100)
+                width = max(width, x_span * 0.005)  # Minimum 0.5% of data range
+                bounds_lower.append(max(width * 0.1, x_span * 0.001))  # Min 10% or 0.1% of range
+                bounds_upper.append(min(width * 10, x_span * 0.5))  # Max 10x or 50% of range
             
             elif self.peak_type == "Voigt":
                 width_g = abs(initial_params[base_idx + 2])
                 width_l = abs(initial_params[base_idx + 3])
-                width_g = max(width_g, x_span * 0.001)
-                width_l = max(width_l, x_span * 0.001)
-                bounds_lower.extend([width_g * 0.01, width_l * 0.01])
-                bounds_upper.extend([width_g * 100, width_l * 100])
+                width_g = max(width_g, x_span * 0.005)
+                width_l = max(width_l, x_span * 0.005)
+                bounds_lower.extend([max(width_g * 0.1, x_span * 0.001), max(width_l * 0.1, x_span * 0.001)])
+                bounds_upper.extend([min(width_g * 10, x_span * 0.5), min(width_l * 10, x_span * 0.5)])
             
             elif self.peak_type in ["BiGaussian", "EMG"]:
                 width1 = abs(initial_params[base_idx + 2])
                 width2 = abs(initial_params[base_idx + 3])
-                width1 = max(width1, x_span * 0.001)
-                width2 = max(width2, x_span * 0.001)
-                bounds_lower.extend([width1 * 0.01, width2 * 0.01])
-                bounds_upper.extend([width1 * 100, width2 * 100])
+                width1 = max(width1, x_span * 0.005)
+                width2 = max(width2, x_span * 0.005)
+                bounds_lower.extend([max(width1 * 0.1, x_span * 0.001), max(width2 * 0.1, x_span * 0.001)])
+                bounds_upper.extend([min(width1 * 10, x_span * 0.5), min(width2 * 10, x_span * 0.5)])
         
         # Ensure all bounds are valid
         for i in range(len(bounds_lower)):

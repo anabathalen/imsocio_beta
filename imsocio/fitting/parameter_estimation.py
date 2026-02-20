@@ -104,7 +104,23 @@ class ParameterEstimator:
                 raise ValueError(f"peak_info[{i}] missing required keys 'x' and/or 'y'")
             
             # Estimate amplitude (force positive, minimum 1% of max)
-            amplitude = max(abs(peak['y']), y_max * 0.01)
+            # Use actual y value at peak position for better initial guess
+            peak_y = abs(peak['y'])
+            
+            # If peak amplitude is very small compared to max, might be noise
+            # Set minimum amplitude to ensure numerical stability
+            amplitude = max(peak_y, y_max * 0.01)
+            
+            # For single-peak fits, ensure amplitude makes sense
+            # Peak should be close to the actual maximum in the data
+            if len(peak_info) == 1 and peak_y < y_max * 0.5:
+                warnings.warn(
+                    f"Detected peak amplitude ({peak_y:.2e}) is much lower than "
+                    f"data maximum ({y_max:.2e}). Peak detection may have missed "
+                    f"the true peak maximum. Using data maximum as initial amplitude.",
+                    UserWarning
+                )
+                amplitude = y_max
             
             # Center position
             center = float(peak['x'])

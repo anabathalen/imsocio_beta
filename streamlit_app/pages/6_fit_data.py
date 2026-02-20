@@ -19,6 +19,7 @@ import plotly.graph_objects as go
 import plotly.express as px
 from scipy.integrate import trapezoid
 import warnings
+import copy
 warnings.filterwarnings('ignore')
 
 # Import from imsocio package
@@ -65,9 +66,46 @@ class FitDataUI:
         </div>
         """, unsafe_allow_html=True)
         
-        auto_detect = st.checkbox("Auto-detect peaks", value=True)
+        # Method selection
+        detection_method = st.radio(
+            "Peak Detection Method",
+            ["Manual Centroids (Recommended)", "Auto-detect peaks"],
+            help="Manual centroids give you precise control over peak positions"
+        )
         
-        if auto_detect:
+        if detection_method == "Manual Centroids (Recommended)":
+            st.info("💡 **Enter the CCS/m/z values where you see peaks in your data**")
+            
+            # Text input for centroids
+            centroid_input = st.text_area(
+                "Peak Centroids (one per line or comma-separated)",
+                height=100,
+                placeholder="Example:\n1250.5\n1275.2\n1300.8\n\nOr: 1250.5, 1275.2, 1300.8",
+                help="Enter the approximate center positions of peaks you want to fit"
+            )
+            
+            # Parse centroids
+            manual_centroids = []
+            if centroid_input.strip():
+                try:
+                    # Try comma-separated first
+                    if ',' in centroid_input:
+                        manual_centroids = [float(x.strip()) for x in centroid_input.split(',') if x.strip()]
+                    else:
+                        # Try newline-separated
+                        manual_centroids = [float(x.strip()) for x in centroid_input.split('\n') if x.strip()]
+                    
+                    if manual_centroids:
+                        st.success(f"✓ {len(manual_centroids)} centroid(s) specified: {', '.join([f'{c:.2f}' for c in sorted(manual_centroids)])}")
+                except ValueError as e:
+                    st.error(f"⚠️ Invalid centroid format. Please enter numbers only. Error: {str(e)}")
+                    manual_centroids = []
+            
+            detection_params = None
+            return manual_centroids, detection_params
+            
+        else:  # Auto-detect
+            st.info("📊 **Automatic peak detection** - adjust parameters to find peaks")
             col1, col2 = st.columns(2)
             with col1:
                 min_height = st.slider("Minimum Height (%)", 1, 50, 5)
@@ -82,10 +120,8 @@ class FitDataUI:
                 'min_distance_percent': min_distance,
                 'smoothing_points': smoothing
             }
-        else:
-            detection_params = None
-            
-        return auto_detect, detection_params
+            manual_centroids = []
+            return manual_centroids, detection_params
     
     @staticmethod
     def show_fitting_options():
@@ -530,18 +566,51 @@ def perform_fitting(x_data, y_data, fitting_options, detection_params=None,
             smoothing_points=detection_params['smoothing_points']
         )
     elif manual_peaks:
-        # Create peak info from manual positions
+        # Create peak info from manual positions with better estimates
         peak_info = []
         for center in manual_peaks:
+            # Find closest data point
             center_idx = np.argmin(np.abs(x_data - center))
+            actual_center = x_data[center_idx]
+            
+            # Get intensity at that position
+            intensity_at_center = y_corrected[center_idx]
+            
+            # Estimate width by finding nearby local minima or using local data
+            # Look for FWHM by examining data around the peak
+            search_radius = max(5, len(x_data) // 20)  # Search ±5 points or 5% of data
+            start_idx = max(0, center_idx - search_radius)
+            end_idx = min(len(x_data), center_idx + search_radius)
+            
+            local_x = x_data[start_idx:end_idx]
+            local_y = y_corrected[start_idx:end_idx]
+            
+            if len(local_y) > 2:
+                # Find half-maximum
+                half_max = intensity_at_center / 2
+                # Find points closest to half max on each side
+                left_side = local_y[:search_radius]
+                right_side = local_y[search_radius:]
+                
+                # Estimate width from local data spread
+                if len(left_side) > 0 and len(right_side) > 0:
+                    left_idx = np.argmin(np.abs(left_side - half_max))
+                    right_idx = np.argmin(np.abs(right_side - half_max))
+                    width_estimate = abs(local_x[search_radius + right_idx] - local_x[left_idx])
+                    width_estimate = max(width_estimate, (x_data.max() - x_data.min()) / 50)
+                else:
+                    width_estimate = (x_data.max() - x_data.min()) / 20
+            else:
+                width_estimate = (x_data.max() - x_data.min()) / 20
+            
             peak_info.append({
                 'index': center_idx,
-                'x': center,
-                'y': y_corrected[center_idx],
-                'prominence': y_corrected[center_idx],
-                'width_half': (x_data.max() - x_data.min()) / 20,
-                'width_base': (x_data.max() - x_data.min()) / 10,
-                'area_estimate': y_corrected[center_idx] * (x_data.max() - x_data.min()) / 20
+                'x': actual_center,
+                'y': intensity_at_center,
+                'prominence': intensity_at_center,
+                'width_half': width_estimate,
+                'width_base': width_estimate * 2,
+                'area_estimate': intensity_at_center * width_estimate
             })
     else:
         st.error("Either enable auto-detection or specify manual peak positions")
@@ -550,6 +619,28 @@ def perform_fitting(x_data, y_data, fitting_options, detection_params=None,
     if not peak_info:
         st.warning("No peaks detected. Try adjusting detection parameters.")
         return None
+    
+    # Warn if only one peak detected - may need more sensitive detection
+    if len(peak_info) == 1 and detection_params:
+        data_range = y_corrected.max() - y_corrected.min()
+        if data_range > 0:
+            # Check if there might be more peaks by looking at data variation
+            # Calculate coefficient of variation (std/mean) as complexity indicator
+            relative_variation = np.std(y_corrected) / np.mean(y_corrected) if np.mean(y_corrected) > 0 else 0
+            
+            # If data has high variation, there might be multiple peaks
+            if relative_variation > 0.3:  # Threshold for "complex" data
+                st.info(f"""
+                ℹ️ **Only 1 peak detected, but data shows complexity**
+                
+                Your data may contain multiple overlapping peaks that weren't detected.
+                
+                **Try adjusting peak detection:**
+                - **Lower min height** (currently {detection_params['min_height_percent']}% → try 3-5%)
+                - **Lower min prominence** (currently {detection_params['min_prominence_percent']}% → try 1-2%)
+                - **Reduce min distance** (currently {detection_params['min_distance_percent']}% → try 2-3%)
+                - **Increase smoothing** (currently {detection_params['smoothing_points']} → try 7-10 points)
+                """)
     
     # Parameter estimation
     try:
@@ -643,6 +734,43 @@ def perform_fitting(x_data, y_data, fitting_options, detection_params=None,
         """)
         return None
     
+    # ========== VALIDATE FIT QUALITY ==========
+    # Check for obviously poor fits that should be rejected
+    r_squared = result.get('r_squared', 0)
+    
+    # Warn if fit quality is poor (R² < 0.7 is concerning for peak data)
+    if r_squared < 0.7:
+        st.warning(f"⚠️ **Poor fit quality detected (R² = {r_squared:.3f})**")
+        st.info("""
+        **The fit has very low R² which suggests:**
+        - Peak detection may have missed important peaks
+        - Wrong peak type selected
+        - Data has high noise or artifacts
+        
+        **Try:**
+        - Adjust peak detection to find more peaks (lower min height/prominence)
+        - Increase smoothing in preprocessing
+        - Try different peak types (Voigt for complex shapes)
+        - Check if baseline correction is appropriate
+        """)
+    
+    # Check if fitted peaks are within reasonable bounds
+    params_per_peak = engine.get_params_per_peak()
+    n_peaks = len(result['parameters']) // params_per_peak
+    x_range = x_data.max() - x_data.min()
+    
+    peaks_outside_data = 0
+    for i in range(n_peaks):
+        center_idx = i * params_per_peak + 1
+        peak_center = result['parameters'][center_idx]
+        # Check if peak center is far outside the data range
+        if peak_center < x_data.min() - x_range * 0.01 or peak_center > x_data.max() + x_range * 0.01:
+            peaks_outside_data += 1
+    
+    if peaks_outside_data > 0:
+        st.warning(f"⚠️ **{peaks_outside_data} peak(s) fitted outside the data range**")
+        st.info("This suggests the fit may have converged to an unrealistic solution. Try adjusting initial peak positions.")
+    
     # Analyze results
     try:
         analyzer = ResultAnalyzer()
@@ -704,11 +832,11 @@ def main():
     
     FitDataUI.show_main_header()
     
-    # Initialize session state
+    # Initialize session state with charge-specific tracking
     if 'all_charge_results' not in st.session_state:
         st.session_state['all_charge_results'] = {}
-    if 'parameter_manager' not in st.session_state:
-        st.session_state['parameter_manager'] = None
+    if 'current_analysis_key' not in st.session_state:
+        st.session_state['current_analysis_key'] = None
     
     # ========== STEP 1: DATA UPLOAD ==========
     st.markdown("""
@@ -795,10 +923,32 @@ def main():
             selected_charge = st.selectbox("Select Charge State:", charges)
             plot_data = df[df['Charge'] == selected_charge].copy().sort_values('CCS')
             data_label = f"Charge {selected_charge}"
+            analysis_key = f"charge_{selected_charge}"
         else:
+            # Create summed data ensuring proper column structure
             plot_data = CCSDDataProcessor.create_summed_data(df)
+            # Verify summed data has required columns
+            if 'CCS' not in plot_data.columns or 'Scaled_Intensity' not in plot_data.columns:
+                st.error("❌ Summed data creation failed - missing required columns")
+                st.write("Available columns:", plot_data.columns.tolist())
+                return
+            # Ensure data types are correct
+            plot_data['CCS'] = pd.to_numeric(plot_data['CCS'], errors='coerce')
+            plot_data['Scaled_Intensity'] = pd.to_numeric(plot_data['Scaled_Intensity'], errors='coerce')
+            plot_data = plot_data.dropna(subset=['CCS', 'Scaled_Intensity'])
+            
             data_label = "Summed Data"
             selected_charge = None
+            analysis_key = "summed"
+    
+    # Clear old fit results if analysis selection changed
+    if st.session_state['current_analysis_key'] != analysis_key:
+        # Clear all fit-related session state
+        for key in ['fit_result', 'fit_result_analysis_key', 'parameter_manager', 'peak_stats', 'fitting_options']:
+            if key in st.session_state:
+                del st.session_state[key]
+        st.session_state['current_analysis_key'] = analysis_key
+        st.info(f"📝 **Switched to {data_label}** - Previous fit cleared. Configure new fitting below.")
     
     with col2:
         st.markdown("**CCS Range**")
@@ -834,31 +984,64 @@ def main():
         st.session_state['fit_ccs_max'] = ccs_max
     
     # Apply filters
-    plot_data = plot_data[(plot_data['CCS'] >= ccs_min) & (plot_data['CCS'] <= ccs_max)]
-    plot_data = plot_data[plot_data['Scaled_Intensity'] > 0]
+    plot_data = plot_data[(plot_data['CCS'] >= ccs_min) & (plot_data['CCS'] <= ccs_max)].copy()
+    plot_data = plot_data[plot_data['Scaled_Intensity'] > 0].copy()
     
     if len(plot_data) == 0:
         st.error("❌ No data points in selected range. Adjust your CCS range.")
         return
     
+    # Ensure plot_data is properly sorted and clean
+    plot_data = plot_data.sort_values('CCS').reset_index(drop=True)
+    
     st.info(f"📊 Analyzing **{data_label}** with **{len(plot_data)} data points** in range {ccs_min:.1f} - {ccs_max:.1f} Ų")
     
-    # Quick preview of data
-    with st.expander("👁️ Preview Data", expanded=False):
-        preview_fig = go.Figure()
-        preview_fig.add_trace(go.Scatter(
-            x=plot_data['CCS'],
-            y=plot_data['Scaled_Intensity'],
-            mode='markers',
-            marker=dict(size=3, color='blue')
-        ))
-        preview_fig.update_layout(
-            title="Data Preview",
-            xaxis_title="CCS (Ų)",
-            yaxis_title="Intensity",
-            height=300
-        )
-        st.plotly_chart(preview_fig, use_container_width=True)
+    # Show debug info for summed data to help troubleshoot
+    if mode == "Summed Data":
+        with st.expander("ℹ️ Summed Data Info", expanded=False):
+            st.write(f"**Total points in summed data:** {len(plot_data)}")
+            st.write(f"**CCS range:** {plot_data['CCS'].min():.2f} - {plot_data['CCS'].max():.2f}")
+            st.write(f"**Intensity range:** {plot_data['Scaled_Intensity'].min():.2e} - {plot_data['Scaled_Intensity'].max():.2e}")
+            st.write(f"**Original charge states summed:** {len(df['Charge'].unique())}")
+    
+    # Show saved status for current charge
+    if mode == "Individual Charge State":
+        if selected_charge in st.session_state['all_charge_results']:
+            st.success(f"✅ Charge {selected_charge} has saved results. You can re-fit to update or change to another charge state.")
+        else:
+            if st.session_state['all_charge_results']:
+                saved_charges = [c for c in st.session_state['all_charge_results'].keys() if c != 'summed']
+                st.info(f"💾 Saved charge states: {', '.join(map(str, sorted(saved_charges)))} | Current: {selected_charge} (not saved yet)")
+    else:  # Summed Data mode
+        if 'summed' in st.session_state['all_charge_results']:
+            st.success(f"✅ Summed Data has saved results. You can re-fit to update or change to charge states.")
+        else:
+            if st.session_state['all_charge_results']:
+                saved_charges = [c for c in st.session_state['all_charge_results'].keys() if c != 'summed']
+                if saved_charges:
+                    st.info(f"💾 Saved charge states: {', '.join(map(str, sorted(saved_charges)))} | Current: Summed (not saved yet)")
+    
+    # Show data preview FIRST (always expanded) so users can see peaks before specifying centroids
+    st.markdown("### 👁️ Data Preview")
+    preview_fig = go.Figure()
+    preview_fig.add_trace(go.Scatter(
+        x=plot_data['CCS'],
+        y=plot_data['Scaled_Intensity'],
+        mode='lines+markers',
+        line=dict(color='#1f77b4', width=1.5),
+        marker=dict(size=2),
+        name='Data'
+    ))
+    preview_fig.update_layout(
+        title=f"Current Data: {data_label}",
+        xaxis_title="CCS (Ų)",
+        yaxis_title="Scaled Intensity",
+        height=400,
+        showlegend=False,
+        hovermode='closest'
+    )
+    st.plotly_chart(preview_fig, use_container_width=True)
+    st.markdown("💡 **Look at the preview above to identify peak positions before configuring peak detection below**")
     
     # ========== STEP 3: CONFIGURE FITTING ==========
     st.markdown("""
@@ -867,14 +1050,31 @@ def main():
     </div>
     """, unsafe_allow_html=True)
     
-    x_data = plot_data['CCS'].values
-    y_data = plot_data['Scaled_Intensity'].values
+    # Extract data arrays with validation
+    try:
+        x_data = plot_data['CCS'].values
+        y_data = plot_data['Scaled_Intensity'].values
+        
+        if len(x_data) == 0 or len(y_data) == 0:
+            st.error("❌ No valid data points available for fitting")
+            return
+            
+        if np.any(np.isnan(x_data)) or np.any(np.isnan(y_data)):
+            st.warning("⚠️ Data contains NaN values - cleaning automatically")
+            valid_mask = ~(np.isnan(x_data) | np.isnan(y_data))
+            x_data = x_data[valid_mask]
+            y_data = y_data[valid_mask]
+            
+    except KeyError as e:
+        st.error(f"❌ Required column missing from data: {e}")
+        st.info("Expected columns: 'CCS' and 'Scaled_Intensity'")
+        return
     
     # Get UI options in organized tabs
     tab1, tab2, tab3 = st.tabs(["🔍 Peak Detection", "⚙️ Fitting Options", "🔧 Advanced"])
     
     with tab1:
-        auto_detect, detection_params = FitDataUI.show_peak_detection_controls()
+        manual_centroids, detection_params = FitDataUI.show_peak_detection_controls()
     
     with tab2:
         fitting_options = FitDataUI.show_fitting_options()
@@ -894,25 +1094,41 @@ def main():
     """, unsafe_allow_html=True)
     
     if st.button("▶️ **Perform Fitting**", type="primary", use_container_width=True):
+        # Clear any previous fit results for clean state
+        for key in ['fit_result', 'fit_result_analysis_key', 'parameter_manager', 'peak_stats']:
+            if key in st.session_state:
+                del st.session_state[key]
+            
         with st.spinner("🔄 Fitting peaks... This may take a moment."):
             result = perform_fitting(
                 x_data, y_data,
                 fitting_options,
-                detection_params=detection_params if auto_detect else None,
-                preprocessing_options=preprocessing_options
+                detection_params=detection_params,
+                preprocessing_options=preprocessing_options,
+                manual_peaks=manual_centroids if manual_centroids else None
             )
             
             if result:
                 fit_result, param_manager, peak_stats = result
+                
+                # Store results with the current analysis_key to prevent cross-contamination
                 st.session_state['fit_result'] = fit_result
+                st.session_state['fit_result_analysis_key'] = analysis_key  # Track which data this fit belongs to
                 st.session_state['parameter_manager'] = param_manager
-                # Ensure peak_stats is never None
                 st.session_state['peak_stats'] = peak_stats if peak_stats is not None else []
                 st.success("✅ **Fitting completed successfully!** Scroll down to view results.")
     
     # ========== STEP 5: VIEW RESULTS ==========
+    # Check if fit results exist AND match the current analysis
     if 'fit_result' not in st.session_state:
         st.info("👆 Click **Perform Fitting** above to start the analysis")
+        return
+    
+    # CRITICAL: Verify fit results belong to current analysis (not from a previous charge state)
+    stored_analysis_key = st.session_state.get('fit_result_analysis_key', None)
+    if stored_analysis_key != analysis_key:
+        st.info(f"👆 Click **Perform Fitting** above to analyze {data_label}")
+        st.warning(f"⚠️ Previous fit results are from a different analysis and have been hidden.")
         return
     
     st.markdown("""
@@ -950,6 +1166,23 @@ def main():
     """, unsafe_allow_html=True)
     
     if st.session_state['parameter_manager']:
+        # Sync parameter_manager with current fitted parameters
+        if 'fit_result' in st.session_state and 'parameters' in st.session_state['fit_result']:
+            current_fit_params = st.session_state['fit_result']['parameters']
+            pm = st.session_state['parameter_manager']
+            
+            # Update parameter manager if out of sync
+            if not np.array_equal(pm.parameters, current_fit_params):
+                # Clear parameter widget states
+                keys_to_delete = [key for key in st.session_state.keys() 
+                                 if key.startswith(('param_', 'fix_', 'constrain_'))]
+                for key in keys_to_delete:
+                    del st.session_state[key]
+                
+                pm.parameters = np.array(current_fit_params, copy=True)
+                st.session_state['parameter_manager'] = pm
+                st.rerun()
+        
         with st.expander("✏️ Edit Parameters and Re-fit", expanded=False):
             st.info("💡 Adjust individual peak parameters below and click **Re-fit** to improve the fit.")
             FitDataUI.show_parameter_editor(
@@ -1030,6 +1263,7 @@ def main():
                         param_manager.parameters = new_result['parameters'].copy()
                         
                         st.session_state['fit_result'] = new_result
+                        st.session_state['fit_result_analysis_key'] = analysis_key  # Maintain analysis tracking
                         st.session_state['parameter_manager'] = param_manager
                         # Ensure peak_stats is never None
                         st.session_state['peak_stats'] = peak_stats if peak_stats is not None else []
@@ -1070,39 +1304,76 @@ def main():
     with col2:
         if mode == "Individual Charge State":
             if st.button(f"💾 **Save Charge {selected_charge}**", type="primary", use_container_width=True):
+                # Safety check: Verify fit results match current analysis
+                stored_analysis_key = st.session_state.get('fit_result_analysis_key', None)
+                if stored_analysis_key != analysis_key:
+                    st.error("❌ Cannot save - fit results don't match current analysis. Please re-fit.")
+                    return
+                
+                # Deep copy all fit data to preserve it independently
+                fit_result_to_save = {}
+                for key, value in st.session_state['fit_result'].items():
+                    if isinstance(value, np.ndarray):
+                        fit_result_to_save[key] = value.copy()
+                    elif isinstance(value, list) and len(value) > 0 and isinstance(value[0], np.ndarray):
+                        fit_result_to_save[key] = [comp.copy() for comp in value]
+                    else:
+                        fit_result_to_save[key] = value
+                
                 st.session_state['all_charge_results'][selected_charge] = {
-                    'fit_result': st.session_state['fit_result'].copy(),
-                    'peak_stats': st.session_state.get('peak_stats', []),
+                    'fit_result': fit_result_to_save,
+                    'peak_stats': copy.deepcopy(st.session_state.get('peak_stats', [])),
                     'fitting_options': st.session_state['fitting_options'].copy(),
-                    'parameter_manager': st.session_state['parameter_manager'],
+                    'parameter_manager': copy.deepcopy(st.session_state['parameter_manager']),
                     'data_info': {
                         'charge': selected_charge,
                         'n_points': len(plot_data),
-                        'ccs_range': (plot_data['CCS'].min(), plot_data['CCS'].max())
+                        'ccs_range': (plot_data['CCS'].min(), plot_data['CCS'].max()),
+                        'analysis_key': analysis_key  # Store for verification
                     }
                 }
+                
                 st.success(f"✅ Saved results for Charge {selected_charge}!")
                 st.rerun()
         else:
             if st.button(f"💾 **Save Summed Data**", type="primary", use_container_width=True):
+                # Safety check: Verify fit results match current analysis
+                stored_analysis_key = st.session_state.get('fit_result_analysis_key', None)
+                if stored_analysis_key != 'summed':
+                    st.error("❌ Cannot save - fit results don't match current analysis. Please re-fit.")
+                    return
+                
+                # Deep copy all fit data
+                fit_result_to_save = {}
+                for key, value in st.session_state['fit_result'].items():
+                    if isinstance(value, np.ndarray):
+                        fit_result_to_save[key] = value.copy()
+                    elif isinstance(value, list) and len(value) > 0 and isinstance(value[0], np.ndarray):
+                        fit_result_to_save[key] = [comp.copy() for comp in value]
+                    else:
+                        fit_result_to_save[key] = value
+                
                 st.session_state['all_charge_results']['summed'] = {
-                    'fit_result': st.session_state['fit_result'].copy(),
-                    'peak_stats': st.session_state.get('peak_stats', []),
+                    'fit_result': fit_result_to_save,
+                    'peak_stats': copy.deepcopy(st.session_state.get('peak_stats', [])),
                     'fitting_options': st.session_state['fitting_options'].copy(),
-                    'parameter_manager': st.session_state['parameter_manager'],
+                    'parameter_manager': copy.deepcopy(st.session_state['parameter_manager']),
                     'data_info': {
                         'charge': 'summed',
                         'n_points': len(plot_data),
-                        'ccs_range': (plot_data['CCS'].min(), plot_data['CCS'].max())
+                        'ccs_range': (float(plot_data['CCS'].min()), float(plot_data['CCS'].max())),
+                        'analysis_key': 'summed'  # Store for verification
                     }
                 }
-                st.success(f"✅ Saved results for Summed Data!")
+                
+                # Show confirmation with peak count
+                n_peaks = len(st.session_state.get('peak_stats', []))
+                st.success(f"✅ Saved Summed Data with {n_peaks} peak(s)!")
                 st.rerun()
     
     # Show saved results summary
     if st.session_state['all_charge_results']:
         st.markdown("#### 📋 Saved Results Summary")
-        summary_data = []
         
         # Sort keys: numeric charges first, then 'summed' at the end
         sorted_keys = sorted([k for k in st.session_state['all_charge_results'].keys() if k != 'summed'])
@@ -1112,33 +1383,66 @@ def main():
         for charge in sorted_keys:
             result_data = st.session_state['all_charge_results'][charge]
             peak_stats = result_data.get('peak_stats', [])
+            fit_result = result_data.get('fit_result', {})
+            fitting_options = result_data.get('fitting_options', {})
             
-            # Try multiple ways to get peak count
+            # Get peak count
             if peak_stats and len(peak_stats) > 0:
                 n_peaks = len(peak_stats)
             elif 'parameter_manager' in result_data and result_data['parameter_manager']:
                 n_peaks = result_data['parameter_manager'].n_peaks
             else:
-                # Calculate from parameters if available
-                fit_result = result_data.get('fit_result', {})
-                fitting_options = result_data.get('fitting_options', {})
                 if 'parameters' in fit_result and 'peak_type' in fitting_options:
                     params_per_peak = get_params_per_peak(fitting_options['peak_type'])
                     n_peaks = len(fit_result['parameters']) // params_per_peak
                 else:
                     n_peaks = 0
             
-            fit_result = result_data.get('fit_result', {})
             r_squared = fit_result.get('r_squared', 0.0)
-            
-            # Display "Summed" with capital S for better readability
             display_charge = "Summed" if charge == 'summed' else charge
-            summary_data.append({
-                'Charge': display_charge,
-                'Peaks': n_peaks,
-                'R²': f"{r_squared:.4f}"
-            })
-        st.dataframe(pd.DataFrame(summary_data), use_container_width=True, hide_index=True)
+            
+            # Create expandable section for each charge state
+            with st.expander(f"**Charge {display_charge}** - {n_peaks} peak(s), R² = {r_squared:.4f}"):
+                if n_peaks > 0 and 'parameters' in fit_result:
+                    # Extract peak parameters
+                    params_per_peak = get_params_per_peak(fitting_options.get('peak_type', 'Gaussian'))
+                    param_names = get_parameter_names(fitting_options.get('peak_type', 'Gaussian'))
+                    
+                    peak_details = []
+                    for i in range(n_peaks):
+                        peak_dict = {'Peak': i + 1}
+                        
+                        # Extract amplitude, center, and width(s)
+                        base_idx = i * params_per_peak
+                        amplitude = fit_result['parameters'][base_idx]
+                        center = fit_result['parameters'][base_idx + 1]
+                        
+                        peak_dict['Amplitude'] = f"{amplitude:.2f}"
+                        peak_dict['Centroid (CCS)'] = f"{center:.2f}"
+                        
+                        # Handle different peak types
+                        if params_per_peak == 3:  # Gaussian or Lorentzian
+                            width = fit_result['parameters'][base_idx + 2]
+                            peak_dict['Width (σ)'] = f"{width:.3f}"
+                        elif params_per_peak == 4:  # Voigt, BiGaussian, EMG
+                            width1 = fit_result['parameters'][base_idx + 2]
+                            width2 = fit_result['parameters'][base_idx + 3]
+                            peak_dict['Width 1'] = f"{width1:.3f}"
+                            peak_dict['Width 2'] = f"{width2:.3f}"
+                        
+                        # Add FWHM from peak_stats if available
+                        if peak_stats and i < len(peak_stats):
+                            fwhm = peak_stats[i].get('fwhm', None)
+                            if fwhm:
+                                peak_dict['FWHM'] = f"{fwhm:.3f}"
+                        
+                        peak_details.append(peak_dict)
+                    
+                    st.dataframe(pd.DataFrame(peak_details), use_container_width=True, hide_index=True)
+                else:
+                    st.info("No peak data available")
+        
+        st.markdown("---")
         
         if st.button("🗑️ Clear All Saved Results"):
             st.session_state['all_charge_results'] = {}
@@ -1187,16 +1491,21 @@ def main():
         
         with col2:
             # Export parameters summary
-            params_per_peak = get_params_per_peak(fitting_options['peak_type'])
-            param_names = get_parameter_names(fitting_options['peak_type'])
-            
             all_params_data = []
+            
             for charge in sorted(st.session_state['all_charge_results'].keys()):
                 result_data = st.session_state['all_charge_results'][charge]
                 result = result_data['fit_result']
                 peak_stats = result_data.get('peak_stats', [])
+                # Use the saved fitting options for THIS charge state
+                fitting_options_saved = result_data.get('fitting_options', fitting_options)
+                params_per_peak = get_params_per_peak(fitting_options_saved['peak_type'])
+                param_names = get_parameter_names(fitting_options_saved['peak_type'])
                 
-                for i in range(len(peak_stats) if peak_stats is not None else 0):
+                # Calculate number of peaks from parameters array
+                n_peaks = len(result['parameters']) // params_per_peak if 'parameters' in result else 0
+                
+                for i in range(n_peaks):
                     peak_params = {'Charge': charge, 'Peak': i + 1}
                     for j, param_name in enumerate(param_names):
                         peak_params[param_name] = result['parameters'][i * params_per_peak + j]

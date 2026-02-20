@@ -272,3 +272,62 @@ class DataProcessor:
             baseline = np.zeros_like(y)
         
         return y - baseline, baseline
+    
+    @staticmethod
+    def calculate_weights(y: np.ndarray) -> np.ndarray:
+        """Calculate statistical weights for weighted least-squares fitting.
+        
+        Weighted fitting gives more importance to data points with higher
+        signal (better signal-to-noise ratio), which is appropriate for
+        spectroscopic data where noise is often proportional to signal.
+        
+        Args:
+            y (array-like): Y-axis data (intensities)
+            
+        Returns:
+            ndarray: Weights for each data point (same shape as y)
+            
+        Notes:
+            - Uses Poisson-like weighting: weight = y (signal as weight)
+            - Minimum weight enforced to avoid division by zero
+            - Negative values are set to minimum weight
+            - Common in spectroscopy where σ² ∝ signal intensity
+            
+        Weighted Fitting Explanation:
+            In ordinary least squares (OLS), all points are treated equally.
+            In weighted least squares (WLS), points with higher weights have
+            more influence on the fit. This is appropriate when:
+            
+            1. Higher signal points have better S/N ratio
+            2. Noise variance changes across the spectrum (heteroscedastic)
+            3. Peak maxima should be fitted more accurately than baseline
+            
+            The weight formula: w_i = y_i (for Poisson noise)
+            The fit minimizes: Σ w_i * (y_i - f(x_i))²
+            
+            This makes the fit prioritize matching the peak regions over
+            low-intensity baseline regions.
+            
+        Example:
+            >>> y = np.array([10, 100, 1000, 100, 10])  # Peak in center
+            >>> weights = DataProcessor.calculate_weights(y)
+            >>> # weights ≈ [10, 100, 1000, 100, 10]
+            >>> # The peak center (y=1000) has 100x more influence than edges
+        """
+        y = np.asarray(y, dtype=float)
+        
+        if y.ndim != 1:
+            raise ValueError(f"y must be 1D array, got shape {y.shape}")
+        if len(y) == 0:
+            raise ValueError("y array is empty")
+        
+        # Use signal intensity as weight (Poisson-like weighting)
+        # This is appropriate for counting statistics in spectroscopy
+        weights = np.abs(y)
+        
+        # Set minimum weight to avoid division by zero
+        # Use 1% of maximum signal as minimum weight
+        min_weight = max(np.max(weights) * 0.01, 1e-10)
+        weights[weights < min_weight] = min_weight
+        
+        return weights

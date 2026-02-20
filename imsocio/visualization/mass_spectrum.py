@@ -98,17 +98,36 @@ class SpectrumData:
         """Get maximum intensity safely."""
         return np.max(self.intensity) if len(self.intensity) > 0 else 0.0
     
-    def normalize(self, method: str = 'max'):
-        """Normalize spectrum data in-place."""
+    def normalize(self, method: str = 'max', mz_range: Optional[tuple] = None):
+        """Normalize spectrum data in-place.
+        
+        Args:
+            method: Normalization method ('max' or 'sum')
+            mz_range: Optional tuple (min_mz, max_mz) to normalize only to visible range.
+                     If None, normalizes to entire spectrum.
+        """
         if len(self.intensity) == 0:
             return
         
+        # If mz_range provided, calculate normalization factor from visible range only
+        if mz_range is not None:
+            min_mz, max_mz = mz_range
+            mask = (self.mz >= min_mz) & (self.mz <= max_mz)
+            
+            if not np.any(mask):
+                # If no data in range, fall back to full spectrum
+                visible_intensity = self.intensity
+            else:
+                visible_intensity = self.intensity[mask]
+        else:
+            visible_intensity = self.intensity
+        
         if method == 'max':
-            max_val = np.max(self.intensity)
+            max_val = np.max(visible_intensity)
             if max_val > 0:
                 self.intensity = self.intensity / max_val
         elif method == 'sum':
-            sum_val = np.sum(self.intensity)
+            sum_val = np.sum(visible_intensity)
             if sum_val > 0:
                 self.intensity = self.intensity / sum_val
 
@@ -271,7 +290,8 @@ class SpectrumProcessor:
         
         Args:
             spectrum: Input spectrum data
-            options: Dictionary with processing options
+            options: Dictionary with processing options. Should include 'x_min' and 'x_max' 
+                    if normalizing to visible range.
             
         Returns:
             Processed SpectrumData
@@ -292,9 +312,18 @@ class SpectrumProcessor:
             percentile = options.get('baseline_percentile', 5)
             processed = SpectrumProcessor.baseline_correct(processed, percentile)
         
-        # Normalization
+        # Normalization - always normalize to selected range
         if options.get('normalize', False):
-            processed.normalize(options.get('normalize_type', 'max'))
+            # Get mz range from options (x_min, x_max)
+            x_min = options.get('x_min')
+            x_max = options.get('x_max')
+            
+            if x_min is not None and x_max is not None:
+                mz_range = (x_min, x_max)
+            else:
+                mz_range = None
+            
+            processed.normalize(options.get('normalize_type', 'max'), mz_range=mz_range)
         
         return processed
 
@@ -348,8 +377,9 @@ class PlotStyler:
         
         # Tick parameters
         tick_color = settings.get('tick_color', 'black')
+        tick_label_size = settings.get('tick_label_size', 12)
         ax.tick_params(
-            labelsize=settings.get('tick_label_size', 12),
+            labelsize=tick_label_size,
             bottom=settings.get('show_bottom_axis', True),
             top=settings.get('show_top_axis', False),
             left=settings.get('show_left_axis', True),
@@ -358,10 +388,11 @@ class PlotStyler:
             labelcolor=tick_color
         )
         
-        # Apply font family to tick labels
+        # Apply font family and size explicitly to tick labels
         font_family = settings.get('font_family', 'sans-serif')
         for label in ax.get_xticklabels() + ax.get_yticklabels():
             label.set_fontfamily(font_family)
+            label.set_fontsize(tick_label_size)
         
         # Hide y-ticks if requested
         if settings.get('hide_y_ticks', False):
@@ -492,10 +523,11 @@ class SpectrumAnnotator:
                 peak_intensity = (peak_intensity * zoom) + baseline_offset + baseline
                 region_max_intensity = (region_max_intensity * zoom) + baseline_offset + baseline
                 
-                # Position annotations at 0.1x the overall maximum intensity above the regional max
-                # Then label at another 0.1x above that
-                marker_y = region_max_intensity + (0.1 * max_intensity)
-                label_y = marker_y + (0.1 * max_intensity)
+                # Position annotations relative to the maximum intensity
+                # Use larger spacing (20% and 25%) to ensure visibility, especially for normalized data
+                spacing = 0.2 * max_intensity  # 20% of max for marker offset
+                marker_y = region_max_intensity + spacing
+                label_y = marker_y + (0.05 * max_intensity)  # Additional 5% for label
                 
                 # Cap at reasonable positions
                 marker_y = min(marker_y, y_max * 0.9)
@@ -514,14 +546,16 @@ class SpectrumAnnotator:
                 # Label configuration
                 font_family = settings.get('font_family', 'Arial') if settings else 'Arial'
                 annotation_weight = settings.get('annotation_weight', 'bold') if settings else 'bold'
+                annotation_font_size = annotation.get('font_size', 12)
                 
                 label_kwargs = {
                     'ha': 'center', 
                     'va': 'bottom', 
-                    'fontsize': annotation.get('font_size', 12),
+                    'fontsize': annotation_font_size,
                     'color': annotation['color'], 
                     'weight': annotation_weight,
-                    'fontfamily': font_family
+                    'fontfamily': font_family,
+                    'fontname': font_family  # Ensure fontname is also set
                 }
                 
                 if annotation.get('show_label_border', False):
@@ -618,7 +652,7 @@ class MassSpectrumPlotter:
         zoom: float = 1.4,
         stack_offset: float = 1.2,
         preserve_baseline: bool = False,
-        baseline_offset_percent: float = 5.0
+        baseline_offset: float = 0.0
     ) -> Tuple[float, float]:
         """Calculate safe Y-axis limits for plot.
         
@@ -630,7 +664,7 @@ class MassSpectrumPlotter:
             zoom: Zoom factor for Y-axis (can be up to 50x or more)
             stack_offset: Offset between stacked spectra
             preserve_baseline: Whether to preserve zero baseline
-            baseline_offset_percent: Percentage of max intensity to offset baseline (default 5%)
+            baseline_offset: Fixed amount to offset baseline below zero (e.g., 100 for 100 units below)
             
         Returns:
             Tuple of (y_min, y_max)
@@ -643,8 +677,8 @@ class MassSpectrumPlotter:
         if max_intensity <= 0:
             return 0, 1000
         
-        # Calculate baseline offset
-        offset = -max_intensity * (baseline_offset_percent / 100.0) if not preserve_baseline else 0
+        # Calculate baseline offset (negative moves down)
+        offset = -baseline_offset if not preserve_baseline else 0
         
         # Calculate limits based on plot type
         if plot_type == "single":
@@ -760,14 +794,14 @@ class MassSpectrumPlotter:
             plot_settings.get('zoom', 1.4),
             plot_settings.get('stack_offset', 1.2),
             plot_settings.get('preserve_baseline', False),
-            plot_settings.get('baseline_offset_percent', 5.0)
+            plot_settings.get('baseline_offset', 0.0)
         )
         
         # Calculate baseline offset for annotations
         max_intensity = max([s.get_max_intensity() for s in spectra if len(s.intensity) > 0])
-        baseline_offset_percent = plot_settings.get('baseline_offset_percent', 5.0)
         preserve_baseline = plot_settings.get('preserve_baseline', False)
-        baseline_offset = -max_intensity * (baseline_offset_percent / 100.0) if not preserve_baseline else 0
+        baseline_offset_value = plot_settings.get('baseline_offset', 0.0)
+        baseline_offset = -baseline_offset_value if not preserve_baseline else 0
         zoom = plot_settings.get('zoom', 1.0)
         
         # Track legend handles and labels from annotations
@@ -855,13 +889,16 @@ class MassSpectrumPlotter:
             # Only show annotation legend entries (protein masses), not file names
             # If there are annotation entries, show only those
             if annotation_legend_handles:
+                legend_font_size = plot_settings.get('tick_label_size', 12)
                 ax.legend(
                     annotation_legend_handles, 
                     annotation_legend_labels,
                     loc=plot_settings.get('legend_pos', 'best'),
                     frameon=plot_settings.get('legend_frame', True),
-                    fontsize=plot_settings.get('tick_label_size', 12),
-                    prop={'family': plot_settings.get('font_family', 'Arial')}
+                    prop={
+                        'family': plot_settings.get('font_family', 'Arial'),
+                        'size': legend_font_size
+                    }
                 )
         
         plt.tight_layout()

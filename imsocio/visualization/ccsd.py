@@ -138,6 +138,8 @@ class PlotSettings:
         shade_gaussians: Fill area under Gaussian components
         title_fontsize: Font size for subplot titles
         title_fontweight: Font weight for subplot titles ("normal" or "bold")
+        show_charge_labels: Show charge state labels (e.g., "15+") on plot
+        charge_labels_to_show: List of specific charge states to label (None = all)
     """
     fig_width: float = 6.0
     fig_height: float = 4.0
@@ -163,6 +165,8 @@ class PlotSettings:
     shade_gaussians: bool = False
     title_fontsize: int = 14
     title_fontweight: str = "bold"
+    show_charge_labels: bool = True
+    charge_labels_to_show: list[int] = None
     
     def __post_init__(self):
         """Initialize default lists."""
@@ -172,6 +176,21 @@ class PlotSettings:
             self.trace_colors = ["black"]
         if self.gaussian_colors is None:
             self.gaussian_colors = []
+    
+    def should_show_charge_label(self, charge: int) -> bool:
+        """Check if a specific charge state should be labeled.
+        
+        Args:
+            charge: Charge state to check
+            
+        Returns:
+            True if the charge label should be shown
+        """
+        if not self.show_charge_labels:
+            return False
+        if self.charge_labels_to_show is None:
+            return True
+        return charge in self.charge_labels_to_show
     
     def get_intensity_column(self) -> str:
         """Get the appropriate intensity column name based on settings.
@@ -470,17 +489,18 @@ class CCSDPlotter:
                                 alpha=0.15
                             )
                 
-                # Add charge label
-                label_x = settings.ccs_min + (settings.ccs_max - settings.ccs_min) * 0.05
-                label_y = offset + (base_max * 0.05 if base_max > 0 else 0.05)
-                ax.text(
-                    label_x, label_y,
-                    f"{int(charge)}+",
-                    fontsize=settings.font_size,
-                    verticalalignment="bottom",
-                    horizontalalignment="left",
-                    color=settings.trace_colors[i]
-                )
+                # Add charge label if enabled for this charge state
+                if settings.should_show_charge_label(charge):
+                    label_x = settings.ccs_min + (settings.ccs_max - settings.ccs_min) * 0.05
+                    label_y = offset + (base_max * 0.05 if base_max > 0 else 0.05)
+                    ax.text(
+                        label_x, label_y,
+                        f"{int(charge)}+",
+                        fontsize=settings.font_size,
+                        verticalalignment="bottom",
+                        horizontalalignment="left",
+                        color=settings.trace_colors[i]
+                    )
                 
                 # Find local maxima for this trace
                 maxima_idx = argrelextrema(interp, np.greater)[0]
@@ -1224,10 +1244,10 @@ class CCSDPlotter:
                 label=label
             )
             
-            # Shade ±1 std deviation
+            # Shade ±1 std deviation (clipped at 0 to prevent negative values)
             ax.fill_between(
                 ccs_grid,
-                mean_trace - std_trace,
+                np.maximum(0, mean_trace - std_trace),
                 mean_trace + std_trace,
                 color=color,
                 alpha=0.2,
