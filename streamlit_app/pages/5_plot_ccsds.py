@@ -190,8 +190,8 @@ class PlotOptionsUI:
                 help="Display charge state labels (e.g., 15+) on the plot"
             )
         
+        charge_labels_to_show = []
         with col4:
-            charge_labels_to_show = []
             if show_charge_labels and available_charges:
                 charge_labels_to_show = st.multiselect(
                     "Select specific charges to label",
