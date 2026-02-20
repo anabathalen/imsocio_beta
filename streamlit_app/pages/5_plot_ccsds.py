@@ -144,8 +144,12 @@ class PlotOptionsUI:
         }
     
     @staticmethod
-    def show_styling_options() -> dict:
-        """Display styling options and return selections."""
+    def show_styling_options(available_charges: list[int] = None) -> dict:
+        """Display styling options and return selections.
+        
+        Args:
+            available_charges: List of available charge states for label filtering
+        """
         st.markdown("""
         <div class="section-card">
             <div class="section-header">✨ Styling Options</div>
@@ -175,6 +179,27 @@ class PlotOptionsUI:
                 help="Shift labels left (negative) or right (positive)"
             )
         
+        # Charge state label options
+        st.markdown("**Charge State Labels**")
+        col3, col4 = st.columns(2)
+        
+        with col3:
+            show_charge_labels = st.checkbox(
+                "Show charge state labels",
+                value=True,
+                help="Display charge state labels (e.g., 15+) on the plot"
+            )
+        
+        with col4:
+            charge_labels_to_show = []
+            if show_charge_labels and available_charges:
+                charge_labels_to_show = st.multiselect(
+                    "Select specific charges to label",
+                    sorted(available_charges),
+                    default=sorted(available_charges),
+                    help="Leave empty or select all to show all charge labels"
+                )
+        
         file_name = st.text_input("PNG file name", value="ccs_plot.png")
         
         return {
@@ -185,6 +210,8 @@ class PlotOptionsUI:
             'label_vertical_pos': label_vertical_pos,
             'label_orientation': label_orientation,
             'label_horizontal_offset': label_horizontal_offset,
+            'show_charge_labels': show_charge_labels,
+            'charge_labels_to_show': charge_labels_to_show if charge_labels_to_show else None,
             'file_name': file_name
         }
     
@@ -640,7 +667,13 @@ def main():
     
     # Step 4: Plot options
     basic_opts = PlotOptionsUI.show_basic_options()
-    styling_opts = PlotOptionsUI.show_styling_options()
+    
+    # Get all unique charges for styling options
+    all_unique_charges = set()
+    for name in dataset_charges:
+        all_unique_charges.update(dataset_charges[name])
+    
+    styling_opts = PlotOptionsUI.show_styling_options(available_charges=sorted(all_unique_charges))
     
     # Get CCS range from first dataset
     ccs_min_default, ccs_max_default = datasets[0][1].get_ccs_range()
@@ -694,7 +727,9 @@ def main():
             trace_colors=trace_palette,
             shade_gaussians=shade_gaussians,
             title_fontsize=title_fontsize,
-            title_fontweight=title_fontweight
+            title_fontweight=title_fontweight,
+            show_charge_labels=styling_opts['show_charge_labels'],
+            charge_labels_to_show=styling_opts['charge_labels_to_show']
         )
     else:
         settings = PlotSettings(
@@ -718,7 +753,9 @@ def main():
             black_lines=styling_opts['black_lines'],
             bg_transparent=(basic_opts['bg_option'] == "Transparent"),
             trace_colors=trace_palette,
-            shade_gaussians=shade_gaussians
+            shade_gaussians=shade_gaussians,
+            show_charge_labels=styling_opts['show_charge_labels'],
+            charge_labels_to_show=styling_opts['charge_labels_to_show']
         )
     
     # Step 5: Generate plot(s)
