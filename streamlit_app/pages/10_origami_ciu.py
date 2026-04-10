@@ -53,6 +53,7 @@ class ORIGAMIInterface:
             <ul>
                 <li><strong>CCS Calibration:</strong> Convert drift times to CCSs using calibration files</li>
                 <li><strong>Replicate Averaging:</strong> Upload multiple replicates to compute mean ± std deviation</li>
+                <li><strong>RMSD Analysis:</strong> Calculate overall RMSD and RMSD<sub>CV</sub> for fingerprint comparison (CIUSuite/ORIGAMI style)</li>
                 <li><strong>2D Interpolation:</strong> Increase data point density with linear or cubic interpolation</li>
                 <li><strong>Smoothing:</strong> Gaussian orSavitzky-Golay smoothing</li>
                 <li><strong>Normalisation:</strong> Normalise each collision voltage slice</li>
@@ -167,7 +168,8 @@ class ORIGAMIInterface:
         """Show file upload widgets for calibration and TWIMExtract files.
         
         Returns:
-            Tuple of (calibration_file, twim_files, data_mode, replicate_mode, ciu50_analysis)
+            Tuple of (calibration_files, twim_files, data_mode, replicate_mode, ciu50_analysis)
+            Note: calibration_files is a single file or list of files depending on replicate_mode
         """
         st.markdown('<div class="section-card">', unsafe_allow_html=True)
         st.markdown('<h3 class="section-header">📁 Upload Files</h3>', unsafe_allow_html=True)
@@ -196,24 +198,75 @@ class ORIGAMIInterface:
                 help="Extract modal CCS at each voltage and fit sigmoidal curves to transitions"
             )
         
-        col1, col2 = st.columns(2)
-
-        with col1:
-            calibration_file = st.file_uploader(
-                "Upload Calibration File",
-                type=['csv', 'txt'],
-                help="CSV file with columns: Z, Drift, CCS, CCS Std.Dev."
+        # Different UI based on replicate mode
+        if replicate_mode:
+            st.markdown("---")
+            st.markdown("#### 📊 Replicate Files")
+            st.info("💡 **Upload files for each replicate**: Each replicate needs its own calibration file (accounting for daily calibration differences)")
+            
+            # Number of replicates selector
+            n_replicates = st.number_input(
+                "Number of replicates:",
+                min_value=2,
+                max_value=10,
+                value=st.session_state.get('n_replicates', 3),
+                step=1,
+                help="Specify how many replicates you want to upload",
+                key='n_replicates'
             )
-
-        with col2:
-            if replicate_mode:
-                twim_files = st.file_uploader(
-                    "Upload TWIMExtract Files (multiple replicates)",
-                    type=['csv', 'txt'],
-                    accept_multiple_files=True,
-                    help="Upload multiple replicate files for averaging"
-                )
+            
+            # Initialize lists to store files
+            calibration_files = []
+            twim_files = []
+            
+            # Create upload sections for each replicate
+            for i in range(n_replicates):
+                with st.expander(f"📁 Replicate {i+1}", expanded=(i<2)):
+                    col1, col2 = st.columns(2)
+                    
+                    with col1:
+                        cal_file = st.file_uploader(
+                            f"Calibration File",
+                            type=['csv', 'txt'],
+                            help="CSV file with columns: Z, Drift, CCS, CCS Std.Dev.",
+                            key=f"cal_file_{i}"
+                        )
+                        if cal_file:
+                            st.success(f"✓ {cal_file.name}")
+                            calibration_files.append(cal_file)
+                    
+                    with col2:
+                        twim_file = st.file_uploader(
+                            f"TWIMExtract File",
+                            type=['csv', 'txt'],
+                            help="CSV file from TWIMExtract with drift times and intensities",
+                            key=f"twim_file_{i}"
+                        )
+                        if twim_file:
+                            st.success(f"✓ {twim_file.name}")
+                            twim_files.append(twim_file)
+            
+            # Validation
+            if len(calibration_files) != len(twim_files):
+                st.warning(f"⚠️ Upload status: {len(calibration_files)} calibration files, {len(twim_files)} TWIMExtract files. Each replicate needs both files.")
+            elif len(calibration_files) < 2:
+                st.warning(f"⚠️ Replicate mode requires at least 2 complete replicate sets. Currently: {len(calibration_files)} sets uploaded.")
             else:
+                st.success(f"✅ {len(calibration_files)} replicate sets ready for processing")
+        
+        else:
+            # Single file mode
+            col1, col2 = st.columns(2)
+
+            with col1:
+                calibration_file = st.file_uploader(
+                    "Upload Calibration File",
+                    type=['csv', 'txt'],
+                    help="CSV file with columns: Z, Drift, CCS, CCS Std.Dev."
+                )
+                calibration_files = calibration_file  # Keep as single file for non-replicate mode
+
+            with col2:
                 twim_file = st.file_uploader(
                     "Upload TWIMExtract File",
                     type=['csv', 'txt'],
@@ -222,7 +275,7 @@ class ORIGAMIInterface:
                 twim_files = [twim_file] if twim_file else []
         
         st.markdown('</div>', unsafe_allow_html=True)
-        return calibration_file, twim_files, data_mode, replicate_mode, ciu50_analysis
+        return calibration_files, twim_files, data_mode, replicate_mode, ciu50_analysis
 
 
 # ============================================================================
@@ -244,14 +297,14 @@ def main():
     ORIGAMIInterface.show_settings_management()
     
     # Show file upload
-    calibration_file, twim_files, data_mode, replicate_mode, ciu50_analysis = ORIGAMIInterface.show_file_upload()
+    calibration_files, twim_files, data_mode, replicate_mode, ciu50_analysis = ORIGAMIInterface.show_file_upload()
     
     # Return uploaded files and options
-    return calibration_file, twim_files, data_mode, replicate_mode, ciu50_analysis
+    return calibration_files, twim_files, data_mode, replicate_mode, ciu50_analysis
 
 
 # Run main application
-calibration_file, twim_files, data_mode, replicate_mode, ciu50_analysis = main()
+calibration_files, twim_files, data_mode, replicate_mode, ciu50_analysis = main()
 
 
 # ============================================================================
@@ -565,19 +618,42 @@ def plot_ciu50_analysis(modal_ccs_data, trap_cv_values, conformer_ranges,
     return fig
 
 
-if calibration_file and twim_files and len(twim_files) > 0:
+# Handle calibration files - convert to list format for consistent processing
+if replicate_mode:
+    cal_files_list = calibration_files if calibration_files else []
+else:
+    cal_files_list = [calibration_files] if calibration_files else []
+
+if cal_files_list and twim_files and len(twim_files) > 0:
+    # Validate file counts in replicate mode
+    if replicate_mode and len(cal_files_list) != len(twim_files):
+        st.error(f"⚠️ Number of calibration files ({len(cal_files_list)}) must match number of TWIMExtract files ({len(twim_files)}) in replicate mode.")
+        st.stop()
+    
     try:
-        # Read calibration file
-        cal_df = pd.read_csv(calibration_file)
+        # Read calibration files
+        cal_dfs = []
+        for idx, cal_file in enumerate(cal_files_list):
+            cal_df = pd.read_csv(cal_file)
+            
+            # Remove rows where error is larger than CCS value
+            initial_rows = len(cal_df)
+            cal_df = cal_df[cal_df['CCS Std.Dev.'] <= cal_df['CCS']]
+            removed_rows = initial_rows - len(cal_df)
+            
+            cal_dfs.append(cal_df)
+            
+            if replicate_mode:
+                st.success(f"Calibration file {idx+1} loaded: {len(cal_df)} calibration points")
+            else:
+                st.success(f"Calibration file loaded: {len(cal_df)} calibration points")
+            
+            if removed_rows > 0:
+                st.warning(f"Removed {removed_rows} points where error ≥ CCS value")
         
-        # Remove rows where error is larger than CCS value
-        initial_rows = len(cal_df)
-        cal_df = cal_df[cal_df['CCS Std.Dev.'] <= cal_df['CCS']]
-        removed_rows = initial_rows - len(cal_df)
-        
-        st.success(f"Calibration file loaded: {len(cal_df)} calibration points")
-        if removed_rows > 0:
-            st.warning(f"Removed {removed_rows} points where error ≥ CCS value")
+        # For non-replicate mode, use the first (and only) calibration file
+        if not replicate_mode:
+            cal_df = cal_dfs[0]
         
         # Display mode information
         if replicate_mode:
@@ -1234,6 +1310,9 @@ if calibration_file and twim_files and len(twim_files) > 0:
                 # ================================================================
                 
                 intensity_matrix_std = None  # Will store std dev if replicates exist
+                overall_rmsd = None  # Overall RMSD across entire matrix
+                rmsd_cv = None  # RMSD at each collision voltage
+                stacked_matrices = None  # Store stacked replicate matrices for later cropping
                 
                 if replicate_mode and st.session_state.get('twim_dfs_replicates') is not None:
                     twim_dfs_list = st.session_state['twim_dfs_replicates']
@@ -1251,6 +1330,17 @@ if calibration_file and twim_files and len(twim_files) > 0:
                         # Get the first replicate's data to establish common grids
                         first_df, first_voltages = twim_dfs_list[0]
                         
+                        # Get calibration for first replicate
+                        if replicate_mode and len(cal_dfs) > 0:
+                            cal_z_df_first = cal_dfs[0][cal_dfs[0]['Z'] == selected_charge].copy()
+                            cal_z_df_first['Drift_ms'] = cal_z_df_first['Drift'] * 1000.0
+                        else:
+                            cal_z_df_first = cal_z_df
+                        
+                        if len(cal_z_df_first) < 2:
+                            st.error(f"Insufficient calibration points for charge state {selected_charge} in first replicate. Need at least 2 points.")
+                            st.stop()
+                        
                         # Process first replicate to get CCS grid
                         if is_cyclic and inject_time is not None and inject_time > 0:
                             drift_times_first = first_df['Drift_Time'].values - inject_time
@@ -1259,8 +1349,8 @@ if calibration_file and twim_files and len(twim_files) > 0:
                         
                         ccs_for_drift_first = np.interp(
                             drift_times_first,
-                            cal_z_df['Drift_ms'].values,
-                            cal_z_df['CCS'].values
+                            cal_z_df_first['Drift_ms'].values,
+                            cal_z_df_first['CCS'].values
                         )
                         
                         # Build CCS dataframe for first replicate
@@ -1302,17 +1392,28 @@ if calibration_file and twim_files and len(twim_files) > 0:
                         for rep_idx, (twim_df_rep, voltages_rep) in enumerate(twim_dfs_list):
                             st.write(f"🔄 Processing replicate {rep_idx + 1}/{len(twim_dfs_list)}...")
                             
+                            # Get calibration for this replicate
+                            if replicate_mode and len(cal_dfs) > rep_idx:
+                                cal_z_df_rep = cal_dfs[rep_idx][cal_dfs[rep_idx]['Z'] == selected_charge].copy()
+                                cal_z_df_rep['Drift_ms'] = cal_z_df_rep['Drift'] * 1000.0
+                                
+                                if len(cal_z_df_rep) < 2:
+                                    st.error(f"⚠️ Insufficient calibration points for charge state {selected_charge} in replicate {rep_idx + 1}. Skipping this replicate.")
+                                    continue
+                            else:
+                                cal_z_df_rep = cal_z_df
+                            
                             # Apply same processing as first file
                             if is_cyclic and inject_time is not None and inject_time > 0:
                                 drift_times_rep = twim_df_rep['Drift_Time'].values - inject_time
                             else:
                                 drift_times_rep = twim_df_rep['Drift_Time'].values
                             
-                            # Convert to CCS
+                            # Convert to CCS using this replicate's calibration
                             ccs_for_drift_rep = np.interp(
                                 drift_times_rep,
-                                cal_z_df['Drift_ms'].values,
-                                cal_z_df['CCS'].values
+                                cal_z_df_rep['Drift_ms'].values,
+                                cal_z_df_rep['CCS'].values
                             )
                             
                             # Build intensity matrix from this replicate's columns
@@ -1408,7 +1509,18 @@ if calibration_file and twim_files and len(twim_files) > 0:
                             
                             st.write(f"  - After CCS interp: Non-zero: {np.count_nonzero(intensity_matrix_interp)}, Max: {np.max(intensity_matrix_interp):.2e}")
                             
-                            all_matrices.append(intensity_matrix_interp)
+                            # Normalize this replicate if CV normalization is enabled
+                            # ORIGAMI normalizes each replicate BEFORE averaging
+                            if normalize_cv:
+                                intensity_matrix_normalized = intensity_matrix_interp.copy()
+                                for j in range(intensity_matrix_normalized.shape[1]):
+                                    col_max = np.max(intensity_matrix_normalized[:, j])
+                                    if col_max > 0:
+                                        intensity_matrix_normalized[:, j] = intensity_matrix_normalized[:, j] / col_max
+                                all_matrices.append(intensity_matrix_normalized)
+                                st.write(f"  - After CV normalization: Max per slice = 1.0")
+                            else:
+                                all_matrices.append(intensity_matrix_interp)
                         
                         # Debug: check all_matrices before stacking
                         st.write(f"📊 All matrices collected: {len(all_matrices)} matrices")
@@ -1416,11 +1528,37 @@ if calibration_file and twim_files and len(twim_files) > 0:
                             st.write(f"  Matrix {idx + 1}: Shape {mat.shape}, Non-zero: {np.count_nonzero(mat)}, Max: {np.max(mat):.2e}")
                         
                         # Stack all matrices and compute mean and std
+                        # Note: If normalize_cv is True, these are already normalized replicates
                         stacked_matrices = np.stack(all_matrices, axis=0)
                         intensity_matrix_original = np.mean(stacked_matrices, axis=0)
                         intensity_matrix_std = np.std(stacked_matrices, axis=0)
                         
+                        # Calculate RMSD metrics (similar to CIUSuite/ORIGAMI)
+                        # RMSD: Root Mean Square Deviation of replicates from mean
+                        # Overall RMSD (global difference indicator)
+                        differences_squared = (stacked_matrices - intensity_matrix_original) ** 2
+                        overall_rmsd = np.sqrt(np.mean(differences_squared))
+                        
+                        # RMSD_CV: RMSD at each collision voltage (local differences)
+                        # For each voltage column, compute RMSD across all CCS points and replicates
+                        n_voltages = intensity_matrix_original.shape[1]
+                        rmsd_cv = np.zeros(n_voltages)
+                        for j in range(n_voltages):
+                            # Get all replicates for this voltage column
+                            replicate_columns = stacked_matrices[:, :, j]  # shape: (n_replicates, n_ccs)
+                            mean_column = intensity_matrix_original[:, j]  # shape: (n_ccs,)
+                            
+                            # Compute RMSD for this voltage
+                            diff_sq = (replicate_columns - mean_column) ** 2
+                            rmsd_cv[j] = np.sqrt(np.mean(diff_sq))
+                        
                         st.write(f"✅ After averaging: Non-zero: {np.count_nonzero(intensity_matrix_original)}, Max: {np.max(intensity_matrix_original):.2e}")
+                        st.write(f"📊 RMSD Metrics:")
+                        st.write(f"  - Overall RMSD: {overall_rmsd:.4f}")
+                        st.write(f"  - RMSD_CV range: [{np.min(rmsd_cv):.4f}, {np.max(rmsd_cv):.4f}]")
+                        
+                        if normalize_cv:
+                            st.info("CV slice normalization was applied to each replicate before averaging (ORIGAMI standard)")
                         
                         # Update trap_cv_values to use common grid
                         trap_cv_values = target_voltages
@@ -1438,20 +1576,14 @@ if calibration_file and twim_files and len(twim_files) > 0:
                 ccs_values_original = ccs_values.copy()
                 trap_cv_values_original = trap_cv_values.copy()
                 
-                # Apply CV normalization if requested
-                if normalize_cv:
+                # Apply CV normalization if requested (for single file mode)
+                # Note: In replicate mode with normalize_cv=True, normalization already happened per-replicate
+                if normalize_cv and (not replicate_mode or len(twim_dfs_list) <= 1):
                     for j in range(intensity_matrix_original.shape[1]):
                         col_max = np.max(intensity_matrix_original[:, j])
                         if col_max > 0:
                             intensity_matrix_original[:, j] = intensity_matrix_original[:, j] / col_max
                     st.info("Applied CV slice normalisation")
-                    
-                    # Also normalize std dev if it exists
-                    if intensity_matrix_std is not None:
-                        for j in range(intensity_matrix_std.shape[1]):
-                            col_max = np.max(intensity_matrix_original[:, j])
-                            if col_max > 0:
-                                intensity_matrix_std[:, j] = intensity_matrix_std[:, j] / col_max
                 
                 # Apply interpolation if requested
                 if interp_multiplier > 1:
@@ -1627,6 +1759,75 @@ if calibration_file and twim_files and len(twim_files) > 0:
                     fig_matrix.update_yaxes(range=[y_min, y_max])
                 
                 # ============================================================
+                # Crop data and recalculate RMSD if axis limits are applied
+                # ============================================================
+                
+                # Store original values for RMSD plotting
+                trap_cv_values_for_rmsd = trap_cv_values.copy()
+                
+                if (not auto_x_limits or not auto_y_limits) and replicate_mode and intensity_matrix_std is not None:
+                    # Find indices for cropping
+                    if not auto_x_limits:
+                        cv_mask = (trap_cv_values >= x_min) & (trap_cv_values <= x_max)
+                        cv_indices = np.where(cv_mask)[0]
+                    else:
+                        cv_indices = np.arange(len(trap_cv_values))
+                    
+                    if not auto_y_limits:
+                        ccs_mask = (ccs_values >= y_min) & (ccs_values <= y_max)
+                        ccs_indices = np.where(ccs_mask)[0]
+                    else:
+                        ccs_indices = np.arange(len(ccs_values))
+                    
+                    # Crop the data
+                    if len(cv_indices) > 0 and len(ccs_indices) > 0:
+                        # Create cropped index grids
+                        ccs_grid_crop = np.ix_(ccs_indices, cv_indices)
+                        
+                        # Crop intensity matrices
+                        intensity_matrix_final_crop = intensity_matrix_final[ccs_grid_crop]
+                        intensity_matrix_std_crop = intensity_matrix_std[ccs_grid_crop]
+                        
+                        # Crop coordinate arrays for consistency
+                        trap_cv_values_crop = trap_cv_values[cv_indices]
+                        ccs_values_crop = ccs_values[ccs_indices]
+                        
+                        # Update main arrays with cropped versions for CIU50 analysis
+                        intensity_matrix_final = intensity_matrix_final_crop
+                        trap_cv_values = trap_cv_values_crop
+                        ccs_values = ccs_values_crop
+                        
+                        # Crop stacked matrices if available
+                        if stacked_matrices is not None:
+                            stacked_matrices_crop = stacked_matrices[:, ccs_indices, :][:, :, cv_indices]
+                            mean_crop = intensity_matrix_final_crop
+                            
+                            # Recalculate RMSD on cropped data
+                            differences_squared_crop = (stacked_matrices_crop - mean_crop) ** 2
+                            overall_rmsd_crop = np.sqrt(np.mean(differences_squared_crop))
+                            
+                            # Recalculate RMSD_CV on cropped data
+                            n_voltages_crop = mean_crop.shape[1]
+                            rmsd_cv_crop = np.zeros(n_voltages_crop)
+                            for j in range(n_voltages_crop):
+                                replicate_columns = stacked_matrices_crop[:, :, j]
+                                mean_column = mean_crop[:, j]
+                                diff_sq = (replicate_columns - mean_column) ** 2
+                                rmsd_cv_crop[j] = np.sqrt(np.mean(diff_sq))
+                            
+                            # Update RMSD values with cropped versions
+                            overall_rmsd = overall_rmsd_crop
+                            rmsd_cv = rmsd_cv_crop
+                            
+                            # Update stacked matrices with cropped version for CIU50 analysis
+                            stacked_matrices = stacked_matrices_crop
+                            
+                            # Update voltage values for RMSD_CV plotting
+                            trap_cv_values_for_rmsd = trap_cv_values_crop
+                            
+                            st.info(f"🔍 RMSD recalculated on cropped data: CV range [{trap_cv_values_crop[0]:.1f}, {trap_cv_values_crop[-1]:.1f}], CCS range [{ccs_values_crop[0]:.1f}, {ccs_values_crop[-1]:.1f}]")
+                
+                # ============================================================
                 # Display Results
                 # ============================================================
                 
@@ -1718,6 +1919,86 @@ if calibration_file and twim_files and len(twim_files) > 0:
                         fig_std.update_yaxes(range=[y_min, y_max])
                     
                     st.plotly_chart(fig_std, use_container_width=True)
+                    
+                    # Display RMSD metrics
+                    if overall_rmsd is not None and rmsd_cv is not None:
+                        st.markdown("#### 📈 RMSD Analysis (CIUSuite/ORIGAMI Style)")
+                        st.markdown("""
+                        <div class="info-card">
+                            <p><strong>RMSD (Root Mean Square Deviation)</strong>: Quantifies differences between replicates.</p>
+                            <ul>
+                                <li><strong>Overall RMSD</strong>: Global difference indicator across entire fingerprint</li>
+                                <li><strong>RMSD<sub>CV</sub></strong>: Local differences at each collision voltage (more sensitive to voltage-specific variations)</li>
+                            </ul>
+                        </div>
+                        """, unsafe_allow_html=True)
+                        
+                        col1, col2 = st.columns([1, 2])
+                        
+                        with col1:
+                            st.metric("Overall RMSD", f"{overall_rmsd:.4f}")
+                            st.metric("Mean RMSD_CV", f"{np.mean(rmsd_cv):.4f}")
+                            st.metric("Max RMSD_CV", f"{np.max(rmsd_cv):.4f}")
+                        
+                        with col2:
+                            # Create RMSD_CV line plot
+                            fig_rmsd_cv = go.Figure()
+                            
+                            fig_rmsd_cv.add_trace(go.Scatter(
+                                x=trap_cv_values_for_rmsd,
+                                y=rmsd_cv,
+                                mode='lines+markers',
+                                line=dict(color='#d62728', width=2),
+                                marker=dict(size=6),
+                                name='RMSD_CV'
+                            ))
+                            
+                            fig_rmsd_cv.update_layout(
+                                title=dict(
+                                    text=f'RMSD<sub>CV</sub> vs Collision Voltage (Z={selected_charge})',
+                                    font=dict(size=font_size, family=font_family),
+                                    x=0.5
+                                ),
+                                xaxis=dict(
+                                    title=dict(
+                                        text='Trap CV (V)',
+                                        font=dict(size=font_size, family=font_family)
+                                    ),
+                                    tickfont=dict(size=font_size, family=font_family),
+                                    showline=True,
+                                    linewidth=2,
+                                    linecolor='black',
+                                    mirror=True,
+                                    showgrid=True,
+                                    gridcolor='lightgray'
+                                ),
+                                yaxis=dict(
+                                    title=dict(
+                                        text='RMSD<sub>CV</sub>',
+                                        font=dict(size=font_size, family=font_family)
+                                    ),
+                                    tickfont=dict(size=font_size, family=font_family),
+                                    showline=True,
+                                    linewidth=2,
+                                    linecolor='black',
+                                    mirror=True,
+                                    showgrid=True,
+                                    gridcolor='lightgray'
+                                ),
+                                width=figure_width,
+                                height=int(figure_height * 0.6),
+                                font=dict(size=font_size, family=font_family),
+                                plot_bgcolor='white',
+                                margin=dict(l=80, r=50, t=80, b=80),
+                                showlegend=False
+                            )
+                            
+                            if not auto_x_limits:
+                                fig_rmsd_cv.update_xaxes(range=[x_min, x_max])
+                            
+                            st.plotly_chart(fig_rmsd_cv, use_container_width=True)
+                        
+                        st.info("💡 **Interpretation**: Higher RMSD values indicate greater variability between replicates at that voltage. Use RMSD_CV to identify voltage regions with consistent vs variable behavior.")
                 
                 # Display processing info
                 st.markdown("""
@@ -1807,6 +2088,10 @@ if calibration_file and twim_files and len(twim_files) > 0:
                 
                 with col3:
                     # Download static PNG using matplotlib
+                    # Set font before creating figure
+                    plt.rcParams['font.family'] = font_family.lower()
+                    plt.rcParams['font.size'] = font_size
+                    
                     fig_static, ax = plt.subplots(
                         figsize=(figure_width_inches, figure_height_inches), 
                         dpi=figure_dpi
@@ -1885,9 +2170,9 @@ if calibration_file and twim_files and len(twim_files) > 0:
                         ax.set_ylim(y_min, y_max)
                     
                     # Set labels and title
-                    ax.set_xlabel('Trap CV (V)', fontsize=font_size, fontfamily=font_family.lower())
-                    ax.set_ylabel('Collision Cross Section (Å²)', fontsize=font_size, fontfamily=font_family.lower())
-                    ax.set_title(title, fontsize=font_size, fontfamily=font_family.lower(), pad=20)
+                    ax.set_xlabel('Trap CV (V)', fontsize=font_size, fontfamily=font_family.lower(), fontweight='normal')
+                    ax.set_ylabel('Collision Cross Section (Å²)', fontsize=font_size, fontfamily=font_family.lower(), fontweight='normal')
+                    ax.set_title(title, fontsize=font_size, fontfamily=font_family.lower(), fontweight='normal', pad=20)
                     
                     # Add black border
                     for spine in ax.spines.values():
@@ -1897,12 +2182,20 @@ if calibration_file and twim_files and len(twim_files) > 0:
                     # Add colorbar if requested
                     if show_colorbar:
                         cbar = plt.colorbar(im, ax=ax)
-                        cbar.set_label(colorbar_title, fontsize=font_size, fontfamily=font_family.lower())
+                        cbar.set_label(colorbar_title, fontsize=font_size, fontfamily=font_family.lower(), fontweight='normal')
                         cbar.ax.tick_params(labelsize=font_size)
+                        # Set colorbar tick label fonts
+                        for label in cbar.ax.get_yticklabels():
+                            label.set_fontfamily(font_family.lower())
+                            label.set_fontsize(font_size)
                         cbar.outline.set_edgecolor('black')
                         cbar.outline.set_linewidth(2)
                     
+                    # Set tick label fonts explicitly
                     ax.tick_params(axis='both', which='major', labelsize=font_size, colors='black')
+                    for label in ax.get_xticklabels() + ax.get_yticklabels():
+                        label.set_fontfamily(font_family.lower())
+                        label.set_fontsize(font_size)
                     
                     plt.tight_layout()
                     
@@ -1921,6 +2214,58 @@ if calibration_file and twim_files and len(twim_files) > 0:
                         use_container_width=True
                     )
                 
+                # Download RMSD data if available (replicate mode)
+                if replicate_mode and rmsd_cv is not None and overall_rmsd is not None:
+                    st.markdown("---")
+                    st.markdown("**📊 RMSD Data (Replicate Analysis)**")
+                    
+                    col_rmsd1, col_rmsd2 = st.columns(2)
+                    
+                    with col_rmsd1:
+                        # Create RMSD_CV dataframe
+                        rmsd_cv_df = pd.DataFrame({
+                            'TrapCV': trap_cv_values_for_rmsd,
+                            'RMSD_CV': rmsd_cv
+                        })
+                        
+                        rmsd_csv_buffer = io.StringIO()
+                        rmsd_cv_df.to_csv(rmsd_csv_buffer, index=False)
+                        
+                        st.download_button(
+                            label="📉 Download RMSD_CV Data (CSV)",
+                            data=rmsd_csv_buffer.getvalue(),
+                            file_name=f"rmsd_cv_z{selected_charge}.csv",
+                            mime="text/csv",
+                            use_container_width=True
+                        )
+                    
+                    with col_rmsd2:
+                        # Create summary file with overall RMSD
+                        rmsd_summary = f"RMSD Analysis Summary (Z={selected_charge})\n\n"
+                        rmsd_summary += f"Overall RMSD: {overall_rmsd:.6f}\n"
+                        rmsd_summary += f"Mean RMSD_CV: {np.mean(rmsd_cv):.6f}\n"
+                        rmsd_summary += f"Max RMSD_CV: {np.max(rmsd_cv):.6f}\n"
+                        rmsd_summary += f"Min RMSD_CV: {np.min(rmsd_cv):.6f}\n"
+                        rmsd_summary += f"Std RMSD_CV: {np.std(rmsd_cv):.6f}\n\n"
+                        
+                        # Add note about data range
+                        if len(trap_cv_values_for_rmsd) < len(trap_cv_values) or not auto_y_limits:
+                            rmsd_summary += f"Data Range (Cropped):\n"
+                            rmsd_summary += f"  CV: [{trap_cv_values_for_rmsd[0]:.1f}, {trap_cv_values_for_rmsd[-1]:.1f}] V\n"
+                            if not auto_y_limits:
+                                rmsd_summary += f"  CCS: [{y_min:.1f}, {y_max:.1f}] Å²\n"
+                            rmsd_summary += "\n"
+                        
+                        rmsd_summary += "Note: RMSD calculated from normalized replicates\n" if normalize_cv else "Note: RMSD calculated from raw intensities\n"
+                        
+                        st.download_button(
+                            label="📋 Download RMSD Summary (TXT)",
+                            data=rmsd_summary,
+                            file_name=f"rmsd_summary_z{selected_charge}.txt",
+                            mime="text/plain",
+                            use_container_width=True
+                        )
+                
                 st.markdown('</div>', unsafe_allow_html=True)
                 
                 # Store processed data in session state for CIU50 analysis
@@ -1933,7 +2278,9 @@ if calibration_file and twim_files and len(twim_files) > 0:
                     'font_family': font_family,
                     'figure_dpi': figure_dpi,
                     'figure_width_inches': figure_width_inches,
-                    'figure_height_inches': figure_height_inches
+                    'figure_height_inches': figure_height_inches,
+                    'replicate_mode': replicate_mode,
+                    'stacked_matrices': stacked_matrices if replicate_mode else None
                 }
                 
     except Exception as e:
@@ -1960,6 +2307,8 @@ if ciu50_analysis and 'processed_data' in st.session_state:
     figure_dpi = data['figure_dpi']
     figure_width_inches = data['figure_width_inches']
     figure_height_inches = data['figure_height_inches']
+    replicate_mode = data.get('replicate_mode', False)
+    stacked_matrices = data.get('stacked_matrices', None)
     
     st.markdown('<div class="section-card">', unsafe_allow_html=True)
     st.markdown('<h3 class="section-header">📊 CIU50 Analysis</h3>', unsafe_allow_html=True)
@@ -2038,147 +2387,394 @@ if ciu50_analysis and 'processed_data' in st.session_state:
     if st.button("🎯 Generate CIU50 Plot", key="ciu50_button"):
         with st.spinner("Performing CIU50 analysis..."):
             try:
-                # Extract modal CCS at each voltage (global maximum across all CCS)
-                modal_ccs_values = []
-                for j in range(len(trap_cv_values)):
-                    intensity_slice = intensity_matrix_final[:, j]
-                    max_idx = np.argmax(intensity_slice)
-                    modal_ccs_values.append(ccs_values[max_idx])
-                
-                modal_ccs_values = np.array(modal_ccs_values)
+                # Define function to analyze one matrix
+                def analyze_single_matrix(intensity_matrix, ccs_vals, trap_cv_vals, matrix_name=""):
+                    """Perform CIU50 analysis on a single intensity matrix"""
+                    # Extract modal CCS at each voltage
+                    modal_ccs_values = []
+                    modal_ccs_indices = []
+                    
+                    st.write(f"🔍 {matrix_name} - Matrix shape: {intensity_matrix.shape}")
+                    st.write(f"🔍 {matrix_name} - CCS vals shape: {ccs_vals.shape}, range: [{ccs_vals.min():.1f}, {ccs_vals.max():.1f}]")
+                    st.write(f"🔍 {matrix_name} - Trap CV vals shape: {trap_cv_vals.shape}, range: [{trap_cv_vals.min():.1f}, {trap_cv_vals.max():.1f}]")
+                    
+                    for j in range(len(trap_cv_vals)):
+                        intensity_slice = intensity_matrix[:, j]
+                        max_idx = np.argmax(intensity_slice)
+                        modal_ccs_values.append(ccs_vals[max_idx])
+                        modal_ccs_indices.append(max_idx)
+                        
+                        if j < 3 or j >= len(trap_cv_vals) - 3:
+                            st.write(f"🔍 {matrix_name} - Voltage {j} ({trap_cv_vals[j]:.2f}V): max_idx={max_idx}, modal_CCS={ccs_vals[max_idx]:.1f}")
+                    
+                    modal_ccs_values = np.array(modal_ccs_values)
+                    st.write(f"🔍 {matrix_name} - Modal CCS range: [{modal_ccs_values.min():.1f}, {modal_ccs_values.max():.1f}]")
+                    
+                    # Calculate modal CCS values for each conformer
+                    conformer_ccs_results = {}
+                    for i, ((ccs_min, ccs_max), label) in enumerate(zip(sorted_ranges, sorted_labels)):
+                        in_conformer = (modal_ccs_values >= ccs_min) & (modal_ccs_values <= ccs_max)
+                        conformer_modal_ccs = modal_ccs_values[in_conformer]
+                        
+                        if len(conformer_modal_ccs) > 0:
+                            conformer_ccs_results[label] = {
+                                'mean': np.mean(conformer_modal_ccs),
+                                'min': np.min(conformer_modal_ccs),
+                                'max': np.max(conformer_modal_ccs)
+                            }
+                    
+                    # Calculate CIU50 for each transition
+                    transition_results = {}
+                    for i in range(len(sorted_ranges) - 1):
+                        conformer1_label = sorted_labels[i]
+                        conformer2_label = sorted_labels[i + 1]
+                        ccs_min1, ccs_max1 = sorted_ranges[i]
+                        ccs_min2, ccs_max2 = sorted_ranges[i + 1]
+                        
+                        in_conformer1 = (modal_ccs_values >= ccs_min1) & (modal_ccs_values <= ccs_max1)
+                        in_conformer2 = (modal_ccs_values >= ccs_min2) & (modal_ccs_values <= ccs_max2)
+                        transition_mask = in_conformer1 | in_conformer2
+                        
+                        transition_voltages = trap_cv_vals[transition_mask]
+                        transition_ccs = modal_ccs_values[transition_mask]
+                        
+                        if len(transition_voltages) >= 4:
+                            ccs_change = np.max(transition_ccs) - np.min(transition_ccs)
+                            
+                            if ccs_change > 10:
+                                try:
+                                    from scipy.optimize import curve_fit
+                                    
+                                    initial_ccs = transition_ccs[0]
+                                    final_ccs = transition_ccs[-1]
+                                    L_guess = abs(final_ccs - initial_ccs)
+                                    x0_guess = np.mean(transition_voltages)
+                                    k_guess = 0.1
+                                    b_guess = min(initial_ccs, final_ccs)
+                                    
+                                    popt, _ = curve_fit(
+                                        sigmoid,
+                                        transition_voltages,
+                                        transition_ccs,
+                                        p0=[L_guess, x0_guess, k_guess, b_guess],
+                                        maxfev=10000
+                                    )
+                                    
+                                    ciu50 = popt[1]
+                                    
+                                    residuals = transition_ccs - sigmoid(transition_voltages, *popt)
+                                    ss_res = np.sum(residuals**2)
+                                    ss_tot = np.sum((transition_ccs - np.mean(transition_ccs))**2)
+                                    r_squared = 1 - (ss_res / ss_tot) if ss_tot > 0 else 0
+                                    
+                                    transition_key = f'{conformer1_label}→{conformer2_label}'
+                                    transition_results[transition_key] = {
+                                        'ciu50': ciu50,
+                                        'r_squared': r_squared,
+                                        'points': len(transition_voltages),
+                                        'fit_params': popt
+                                    }
+                                    
+                                except Exception:
+                                    pass
+                    
+                    return modal_ccs_values, conformer_ccs_results, transition_results
                 
                 # Sort conformer ranges by CCS (ascending order)
                 sorted_indices = np.argsort([r[0] for r in conformer_ranges])
                 sorted_ranges = [conformer_ranges[i] for i in sorted_indices]
                 sorted_labels = [conformer_labels[i] for i in sorted_indices]
                 
-                # Create figure
-                fig, ax = plt.subplots(figsize=(figure_width_inches, figure_height_inches), dpi=figure_dpi)
-                
-                # Plot modal CCS vs voltage
-                ax.plot(trap_cv_values, modal_ccs_values, 'o-', color='black', 
-                       markersize=6, linewidth=2, label='Modal CCS', zorder=3)
-                
-                # Add colored backgrounds for conformer regions
-                colors = plt.cm.Set3(np.linspace(0, 1, len(sorted_ranges)))
-                for i, ((ccs_min, ccs_max), label, color) in enumerate(zip(sorted_ranges, sorted_labels, colors)):
-                    ax.axhspan(ccs_min, ccs_max, alpha=0.2, color=color, 
-                              label=f'{label} region', zorder=1)
-                
-                # Calculate CIU50 for each transition
-                ciu50_results = []
-                for i in range(len(sorted_ranges) - 1):
-                    # Transition from conformer i to conformer i+1
-                    conformer1_label = sorted_labels[i]
-                    conformer2_label = sorted_labels[i + 1]
-                    ccs_min1, ccs_max1 = sorted_ranges[i]
-                    ccs_min2, ccs_max2 = sorted_ranges[i + 1]
+                # Perform analysis
+                if replicate_mode and stacked_matrices is not None:
+                    # Analyze each replicate
+                    n_replicates = stacked_matrices.shape[0]
+                    st.info(f"📊 Analyzing {n_replicates} replicates individually...")
+                    st.info(f"📐 Data range: CV [{trap_cv_values.min():.1f}, {trap_cv_values.max():.1f}] V, CCS [{ccs_values.min():.1f}, {ccs_values.max():.1f}] Ų")
                     
-                    # Find all voltages where modal CCS is within either conformer's range
-                    # (i.e., the transition region from conformer 1 to conformer 2)
-                    in_conformer1 = (modal_ccs_values >= ccs_min1) & (modal_ccs_values <= ccs_max1)
-                    in_conformer2 = (modal_ccs_values >= ccs_min2) & (modal_ccs_values <= ccs_max2)
-                    transition_mask = in_conformer1 | in_conformer2
+                    all_conformer_results = []
+                    all_transition_results = []
+                    replicate_modal_ccs = []
                     
-                    transition_voltages = trap_cv_values[transition_mask]
-                    transition_ccs = modal_ccs_values[transition_mask]
+                    for rep_idx in range(n_replicates):
+                        modal_ccs, conformer_ccs, transition_data = analyze_single_matrix(
+                            stacked_matrices[rep_idx], ccs_values, trap_cv_values, f"Replicate {rep_idx + 1}"
+                        )
+                        replicate_modal_ccs.append(modal_ccs)
+                        all_conformer_results.append(conformer_ccs)
+                        all_transition_results.append(transition_data)
                     
-                    if len(transition_voltages) >= 4:  # Need at least 4 points for fitting
-                        # Check if there's significant change in CCS
-                        ccs_change = np.max(transition_ccs) - np.min(transition_ccs)
+                    # Verify dimensions
+                    st.write(f"🔍 Debug: len(trap_cv_values)={len(trap_cv_values)}, len(replicate_modal_ccs[0])={len(replicate_modal_ccs[0])}, len(ccs_values)={len(ccs_values)}, stacked_matrices.shape={stacked_matrices.shape}")
+                    st.write(f"🔍 Debug: trap_cv_values range: [{trap_cv_values[0]:.2f}, {trap_cv_values[-1]:.2f}]")
+                    st.write(f"🔍 Debug: ccs_values range: [{ccs_values[0]:.2f}, {ccs_values[-1]:.2f}]")
+                    st.write(f"🔍 Debug: Rep1 modal CCS first 5: {replicate_modal_ccs[0][:5]}")
+                    st.write(f"🔍 Debug: Rep1 modal CCS last 5: {replicate_modal_ccs[0][-5:]}")
+                    st.write(f"🔍 Debug: Corresponding voltages first 5: {trap_cv_values[:5]}")
+                    st.write(f"🔍 Debug: Corresponding voltages last 5: {trap_cv_values[-5:]}")
+                    
+                    # Calculate statistics across replicates
+                    # Conformer CCS statistics with individual values
+                    conformer_ccs_stats = []
+                    for label in sorted_labels:
+                        means = [r[label]['mean'] for r in all_conformer_results if label in r]
+                        if len(means) > 0:
+                            row_data = {'Conformer': label}
+                            for rep_idx, result in enumerate(all_conformer_results):
+                                if label in result:
+                                    row_data[f'Rep{rep_idx+1} CCS (Ų)'] = result[label]['mean']
+                                else:
+                                    row_data[f'Rep{rep_idx+1} CCS (Ų)'] = np.nan
+                            row_data['Mean CCS (Ų)'] = np.mean(means)
+                            row_data['Std CCS (Ų)'] = np.std(means, ddof=1) if len(means) > 1 else 0
+                            conformer_ccs_stats.append(row_data)
+                    
+                    # Transition CIU50 statistics with individual values
+                    ciu50_stats = []
+                    all_transitions = set()
+                    for tr in all_transition_results:
+                        all_transitions.update(tr.keys())
+                    
+                    for transition_key in sorted(all_transitions):
+                        ciu50_values = []
+                        r2_values = []
+                        row_data = {'Transition': transition_key.replace('→', ' → ')}
                         
-                        if ccs_change > 10:  # At least 10 Ų change
-                            try:
-                                from scipy.optimize import curve_fit
+                        for rep_idx, result in enumerate(all_transition_results):
+                            if transition_key in result:
+                                ciu50_val = result[transition_key]['ciu50']
+                                r2_val = result[transition_key]['r_squared']
+                                ciu50_values.append(ciu50_val)
+                                r2_values.append(r2_val)
+                                row_data[f'Rep{rep_idx+1} CIU50 (V)'] = ciu50_val
+                                row_data[f'Rep{rep_idx+1} R²'] = r2_val
+                            else:
+                                row_data[f'Rep{rep_idx+1} CIU50 (V)'] = np.nan
+                                row_data[f'Rep{rep_idx+1} R²'] = np.nan
+                        
+                        if len(ciu50_values) > 0:
+                            row_data['Mean CIU50 (V)'] = np.mean(ciu50_values)
+                            row_data['Std CIU50 (V)'] = np.std(ciu50_values, ddof=1) if len(ciu50_values) > 1 else 0
+                            row_data['Mean R²'] = np.mean(r2_values)
+                            row_data['N'] = len(ciu50_values)
+                            ciu50_stats.append(row_data)
+                    
+                    # Use mean modal CCS for plotting
+                    modal_ccs_values = np.mean(replicate_modal_ccs, axis=0)
+                    
+                else:
+                    # Single analysis on averaged matrix
+                    modal_ccs_values, conformer_ccs_results, transition_results = analyze_single_matrix(
+                        intensity_matrix_final, ccs_values, trap_cv_values, "Average"
+                    )
+                    
+                    # Format as single-replicate stats
+                    conformer_ccs_stats = []
+                    for label in sorted_labels:
+                        if label in conformer_ccs_results:
+                            conformer_ccs_stats.append({
+                                'Conformer': label,
+                                'Modal CCS (Ų)': conformer_ccs_results[label]['mean']
+                            })
+                    
+                    ciu50_stats = []
+                    for transition_key, data in transition_results.items():
+                        ciu50_stats.append({
+                            'Transition': transition_key.replace('→', ' → '),
+                            'CIU50 (V)': data['ciu50'],
+                            'R²': data['r_squared'],
+                            'Points': data['points']
+                        })
+                
+                # Set font before creating figures
+                plt.rcParams['font.family'] = font_family
+                plt.rcParams['font.size'] = font_size
+                
+                # Create plots for each replicate or single plot
+                if replicate_mode and stacked_matrices is not None:
+                    st.markdown("#### Individual Replicate CIU50 Plots")
+                    
+                    # Create a figure for each replicate
+                    for rep_idx in range(n_replicates):
+                        fig, ax = plt.subplots(figsize=(figure_width_inches, figure_height_inches), dpi=figure_dpi)
+                        
+                        # Get modal CCS for this replicate
+                        modal_ccs_rep = replicate_modal_ccs[rep_idx]
+                        
+                        # Plot modal CCS vs voltage
+                        ax.plot(trap_cv_values, modal_ccs_rep, 'o-', color='black', 
+                               markersize=6, linewidth=2, label=f'Modal CCS (Rep {rep_idx+1})', zorder=3)
+                        
+                        # Add colored backgrounds for conformer regions
+                        colors = plt.cm.Set3(np.linspace(0, 1, len(sorted_ranges)))
+                        for i, ((ccs_min, ccs_max), label, color) in enumerate(zip(sorted_ranges, sorted_labels, colors)):
+                            ax.axhspan(ccs_min, ccs_max, alpha=0.2, color=color, 
+                                      label=f'{label} region', zorder=1)
+                        
+                        # Plot fitted transitions for this replicate
+                        ref_transitions = all_transition_results[rep_idx]
+                        for transition_key, data in ref_transitions.items():
+                            conformer1_label, conformer2_label = transition_key.split('→')
+                            ccs_min1, ccs_max1 = sorted_ranges[sorted_labels.index(conformer1_label)]
+                            ccs_min2, ccs_max2 = sorted_ranges[sorted_labels.index(conformer2_label)]
+                            
+                            in_conformer1 = (modal_ccs_rep >= ccs_min1) & (modal_ccs_rep <= ccs_max1)
+                            in_conformer2 = (modal_ccs_rep >= ccs_min2) & (modal_ccs_rep <= ccs_max2)
+                            transition_mask = in_conformer1 | in_conformer2
+                            
+                            transition_voltages = trap_cv_values[transition_mask]
+                            
+                            if len(transition_voltages) >= 4:
+                                popt = data['fit_params']
+                                ciu50 = data['ciu50']
+                                r_squared = data['r_squared']
                                 
-                                # Sigmoid parameters: L, x0, k, b
-                                initial_ccs = transition_ccs[0]
-                                final_ccs = transition_ccs[-1]
-                                L_guess = abs(final_ccs - initial_ccs)
-                                x0_guess = np.mean(transition_voltages)
-                                k_guess = 0.1
-                                b_guess = min(initial_ccs, final_ccs)
-                                
-                                popt, _ = curve_fit(
-                                    sigmoid,
-                                    transition_voltages,
-                                    transition_ccs,
-                                    p0=[L_guess, x0_guess, k_guess, b_guess],
-                                    maxfev=10000
-                                )
-                                
-                                ciu50 = popt[1]  # Midpoint
-                                
-                                # Generate fitted curve
-                                v_fine = np.linspace(transition_voltages.min(), 
-                                                    transition_voltages.max(), 200)
+                                v_fine = np.linspace(transition_voltages.min(), transition_voltages.max(), 200)
                                 ccs_fitted = sigmoid(v_fine, *popt)
                                 
-                                # Calculate R²
-                                residuals = transition_ccs - sigmoid(transition_voltages, *popt)
-                                ss_res = np.sum(residuals**2)
-                                ss_tot = np.sum((transition_ccs - np.mean(transition_ccs))**2)
-                                r_squared = 1 - (ss_res / ss_tot) if ss_tot > 0 else 0
+                                ax.plot(v_fine, ccs_fitted, '--', color='red', linewidth=2, alpha=0.7, zorder=2)
                                 
-                                # Plot fitted sigmoid
-                                ax.plot(v_fine, ccs_fitted, '--', color='red', 
-                                       linewidth=2, alpha=0.7, zorder=2)
-                                
-                                # Add CIU50 annotation
                                 ccs_at_ciu50 = sigmoid(ciu50, *popt)
-                                ax.axvline(ciu50, color='red', linestyle=':', 
-                                          alpha=0.5, linewidth=2, zorder=2)
+                                ax.axvline(ciu50, color='red', linestyle=':', alpha=0.5, linewidth=2, zorder=2)
                                 ax.annotate(
                                     f'{conformer1_label}→{conformer2_label}\nCIU₅₀ = {ciu50:.1f}V\nR² = {r_squared:.3f}',
                                     xy=(ciu50, ccs_at_ciu50),
                                     xytext=(15, 0),
                                     textcoords='offset points',
                                     fontsize=font_size-1,
-                                    bbox=dict(boxstyle='round,pad=0.5', 
-                                             facecolor='white', 
-                                             edgecolor='red', 
-                                             alpha=0.8),
-                                    arrowprops=dict(arrowstyle='->', 
-                                                   color='red', 
-                                                   lw=1.5)
+                                    bbox=dict(boxstyle='round,pad=0.5', facecolor='white', edgecolor='red', alpha=0.8),
+                                    arrowprops=dict(arrowstyle='->', color='red', lw=1.5)
                                 )
-                                
-                                ciu50_results.append({
-                                    'Transition': f'{conformer1_label} → {conformer2_label}',
-                                    'CIU50 (V)': ciu50,
-                                    'R²': r_squared,
-                                    'Points_fitted': len(transition_voltages)
-                                })
-                                
-                            except Exception as fit_error:
-                                st.warning(f"Failed to fit transition {conformer1_label}→{conformer2_label}: {str(fit_error)}")
+                        
+                        # Formatting
+                        ax.set_xlabel('Collision Voltage (V)', fontsize=font_size+2, 
+                                     fontfamily=font_family, fontweight='bold')
+                        ax.set_ylabel('Modal CCS (Ų)', fontsize=font_size+2, 
+                                     fontfamily=font_family, fontweight='bold')
+                        ax.set_title(f'CIU50 Analysis: Replicate {rep_idx+1} (Z={selected_charge})', 
+                                    fontsize=font_size+3, fontfamily=font_family, 
+                                    fontweight='bold', pad=15)
+                        
+                        # Let matplotlib auto-scale axes based on actual data
+                        # Don't force axis limits to full data range
+                        
+                        # Set tick label fonts explicitly
+                        for label in ax.get_xticklabels() + ax.get_yticklabels():
+                            label.set_fontfamily(font_family)
+                            label.set_fontsize(font_size)
+                        
+                        ax.legend(loc='best', fontsize=font_size-1, framealpha=0.9, prop={'family': font_family, 'size': font_size-1})
+                        ax.grid(True, alpha=0.3, linestyle='--')
+                        
+                        for spine in ax.spines.values():
+                            spine.set_linewidth(1.5)
+                            spine.set_edgecolor('black')
+                        
+                        plt.tight_layout()
+                        st.pyplot(fig)
+                        plt.close(fig)
+                    
+                else:
+                    # Single plot for non-replicate mode
+                    fig, ax = plt.subplots(figsize=(figure_width_inches, figure_height_inches), dpi=figure_dpi)
+                    
+                    # Plot modal CCS vs voltage  
+                    ax.plot(trap_cv_values, modal_ccs_values, 'o-', color='black', 
+                           markersize=6, linewidth=2, label='Modal CCS', zorder=3)
+                    
+                    # Add colored backgrounds for conformer regions
+                    colors = plt.cm.Set3(np.linspace(0, 1, len(sorted_ranges)))
+                    for i, ((ccs_min, ccs_max), label, color) in enumerate(zip(sorted_ranges, sorted_labels, colors)):
+                        ax.axhspan(ccs_min, ccs_max, alpha=0.2, color=color, 
+                                  label=f'{label} region', zorder=1)
+                    
+                    # Plot fitted transitions using stored parameters
+                    ref_transitions = transition_results
+                    for transition_key, data in ref_transitions.items():
+                        conformer1_label, conformer2_label = transition_key.split('→')
+                        ccs_min1, ccs_max1 = sorted_ranges[sorted_labels.index(conformer1_label)]
+                        ccs_min2, ccs_max2 = sorted_ranges[sorted_labels.index(conformer2_label)]
+                        
+                        in_conformer1 = (modal_ccs_values >= ccs_min1) & (modal_ccs_values <= ccs_max1)
+                        in_conformer2 = (modal_ccs_values >= ccs_min2) & (modal_ccs_values <= ccs_max2)
+                        transition_mask = in_conformer1 | in_conformer2
+                        
+                        transition_voltages = trap_cv_values[transition_mask]
+                        
+                        if len(transition_voltages) >= 4:
+                            popt = data['fit_params']
+                            ciu50 = data['ciu50']
+                            r_squared = data['r_squared']
+                            
+                            v_fine = np.linspace(transition_voltages.min(), transition_voltages.max(), 200)
+                            ccs_fitted = sigmoid(v_fine, *popt)
+                            
+                            ax.plot(v_fine, ccs_fitted, '--', color='red', linewidth=2, alpha=0.7, zorder=2)
+                            
+                            ccs_at_ciu50 = sigmoid(ciu50, *popt)
+                            ax.axvline(ciu50, color='red', linestyle=':', alpha=0.5, linewidth=2, zorder=2)
+                            ax.annotate(
+                                f'{conformer1_label}→{conformer2_label}\nCIU₅₀ = {ciu50:.1f}V\nR² = {r_squared:.3f}',
+                                xy=(ciu50, ccs_at_ciu50),
+                                xytext=(15, 0),
+                                textcoords='offset points',
+                                fontsize=font_size-1,
+                                bbox=dict(boxstyle='round,pad=0.5', facecolor='white', edgecolor='red', alpha=0.8),
+                                arrowprops=dict(arrowstyle='->', color='red', lw=1.5)
+                            )
+                    
+                    # Formatting
+                    ax.set_xlabel('Collision Voltage (V)', fontsize=font_size+2, 
+                                 fontfamily=font_family, fontweight='bold')
+                    ax.set_ylabel('Modal CCS (Ų)', fontsize=font_size+2, 
+                                 fontfamily=font_family, fontweight='bold')
+                    ax.set_title(f'CIU50 Analysis: Conformational Transitions (Z={selected_charge})', 
+                                fontsize=font_size+3, fontfamily=font_family, 
+                                fontweight='bold', pad=15)
+                    
+                    # Set tick label fonts explicitly
+                    for label in ax.get_xticklabels() + ax.get_yticklabels():
+                        label.set_fontfamily(font_family)
+                        label.set_fontsize(font_size)
+                    
+                    ax.legend(loc='best', fontsize=font_size-1, framealpha=0.9, prop={'family': font_family, 'size': font_size-1})
+                    ax.grid(True, alpha=0.3, linestyle='--')
+                    
+                    for spine in ax.spines.values():
+                        spine.set_linewidth(1.5)
+                        spine.set_edgecolor('black')
+                    
+                    plt.tight_layout()
+                    st.markdown("#### CIU50 Analysis Results")
+                    st.pyplot(fig)
                 
-                # Formatting
-                ax.set_xlabel('Collision Voltage (V)', fontsize=font_size+2, 
-                             fontfamily=font_family, fontweight='bold')
-                ax.set_ylabel('Modal CCS (Ų)', fontsize=font_size+2, 
-                             fontfamily=font_family, fontweight='bold')
-                ax.set_title(f'CIU50 Analysis: Conformational Transitions (Z={selected_charge})', 
-                            fontsize=font_size+3, fontfamily=font_family, 
-                            fontweight='bold', pad=15)
-                ax.legend(loc='best', fontsize=font_size-1, framealpha=0.9)
-                ax.grid(True, alpha=0.3, linestyle='--')
+                # Display combined summary table
+                st.markdown("#### CIU50 Analysis Summary")
                 
-                for spine in ax.spines.values():
-                    spine.set_linewidth(1.5)
-                    spine.set_edgecolor('black')
+                # Conformer CCS table with statistics
+                if conformer_ccs_stats:
+                    st.markdown("**Conformer Modal CCS Values:**")
+                    conformer_df = pd.DataFrame(conformer_ccs_stats)
+                    
+                    # Format numeric columns
+                    for col in conformer_df.columns:
+                        if 'CCS' in col and col != 'Conformer':
+                            conformer_df[col] = conformer_df[col].apply(lambda x: f"{x:.1f}" if not pd.isna(x) else "N/A")
+                    
+                    st.table(conformer_df)
                 
-                plt.tight_layout()
-                
-                st.markdown("#### CIU50 Analysis Results")
-                st.pyplot(fig)
-                
-                # Display results table
-                if ciu50_results:
-                    st.markdown("#### CIU50 Values:")
-                    results_df = pd.DataFrame(ciu50_results)
-                    results_df['CIU50 (V)'] = results_df['CIU50 (V)'].apply(lambda x: f"{x:.2f}")
-                    results_df['R²'] = results_df['R²'].apply(lambda x: f"{x:.4f}")
+                # CIU50 transition results with statistics
+                if ciu50_stats:
+                    st.markdown("**CIU50 Transition Values:**")
+                    results_df = pd.DataFrame(ciu50_stats)
+                    
+                    # Format numeric columns
+                    for col in results_df.columns:
+                        if 'CIU50' in col:
+                            results_df[col] = results_df[col].apply(lambda x: f"{x:.2f}" if not pd.isna(x) else "N/A")
+                        elif 'R²' in col:
+                            results_df[col] = results_df[col].apply(lambda x: f"{x:.4f}" if not pd.isna(x) else "N/A")
+                    
                     st.table(results_df)
                 else:
                     st.warning("No transitions detected. Try adjusting conformer CCS ranges or check if data shows conformational changes.")
@@ -2186,38 +2782,58 @@ if ciu50_analysis and 'processed_data' in st.session_state:
                 # Download options for CIU50 data
                 st.markdown("#### Download CIU50 Data:")
                 
-                col1, col2 = st.columns(2)
-                
-                with col1:
-                    # Download modal CCS data
-                    modal_ccs_df = pd.DataFrame({
-                        'Voltage': trap_cv_values,
-                        'Modal_CCS': modal_ccs_values
-                    })
+                if replicate_mode and stacked_matrices is not None:
+                    # Download modal CCS data for all replicates
+                    modal_ccs_dict = {'Voltage': trap_cv_values}
+                    for rep_idx in range(n_replicates):
+                        modal_ccs_dict[f'Rep{rep_idx+1}_Modal_CCS'] = replicate_modal_ccs[rep_idx]
+                    modal_ccs_dict['Mean_Modal_CCS'] = modal_ccs_values
+                    
+                    modal_ccs_df = pd.DataFrame(modal_ccs_dict)
                     
                     csv_buffer_ciu50 = io.StringIO()
                     modal_ccs_df.to_csv(csv_buffer_ciu50, index=False)
                     
                     st.download_button(
-                        label="📊 Download Modal CCS (CSV)",
+                        label="📊 Download All Modal CCS Data (CSV)",
                         data=csv_buffer_ciu50.getvalue(),
-                        file_name=f"modal_ccs_z{selected_charge}.csv",
+                        file_name=f"modal_ccs_all_replicates_z{selected_charge}.csv",
                         mime="text/csv",
                         use_container_width=True
                     )
-                
-                with col2:
-                    # Download CIU50 plot
-                    png_buffer_ciu50 = io.BytesIO()
-                    fig.savefig(png_buffer_ciu50, format='png', dpi=figure_dpi, bbox_inches='tight')
+                else:
+                    col1, col2 = st.columns(2)
                     
-                    st.download_button(
-                        label="🖼️ Download CIU50 Plot (PNG)",
-                        data=png_buffer_ciu50.getvalue(),
-                        file_name=f"ciu50_analysis_z{selected_charge}.png",
-                        mime="image/png",
-                        use_container_width=True
-                    )
+                    with col1:
+                        # Download modal CCS data
+                        modal_ccs_df = pd.DataFrame({
+                            'Voltage': trap_cv_values,
+                            'Modal_CCS': modal_ccs_values
+                        })
+                        
+                        csv_buffer_ciu50 = io.StringIO()
+                        modal_ccs_df.to_csv(csv_buffer_ciu50, index=False)
+                        
+                        st.download_button(
+                            label="📊 Download Modal CCS (CSV)",
+                            data=csv_buffer_ciu50.getvalue(),
+                            file_name=f"modal_ccs_z{selected_charge}.csv",
+                            mime="text/csv",
+                            use_container_width=True
+                        )
+                    
+                    with col2:
+                        # Download CIU50 plot
+                        png_buffer_ciu50 = io.BytesIO()
+                        fig.savefig(png_buffer_ciu50, format='png', dpi=figure_dpi, bbox_inches='tight')
+                        
+                        st.download_button(
+                            label="🖼️ Download CIU50 Plot (PNG)",
+                            data=png_buffer_ciu50.getvalue(),
+                            file_name=f"ciu50_analysis_z{selected_charge}.png",
+                            mime="image/png",
+                            use_container_width=True
+                        )
                 
                 st.success("✅ CIU50 analysis complete!")
                 
@@ -2259,11 +2875,21 @@ with st.expander("❓Help"):
     
     **Replicate Averaging Mode:**
     - Upload multiple replicate files to compute mean ± standard deviation
-    - All replicates are CCS-converted, interpolated to a common grid, and averaged
+    - **Improved Interface:** Specify number of replicates, then upload calibration + TWIMExtract file for each replicate in dedicated sections
+    - **File Pairing:** Each replicate has its own calibration file (accounts for daily calibration differences)
+    - Files are matched by replicate number (Replicate 1 calibration → Replicate 1 TWIM data, etc.)
+    - All replicates are CCS-converted, interpolated to a common grid
+    - **IMPORTANT (ORIGAMI standard):** If CV normalization is enabled, each replicate is normalized **before** averaging
+    - This means std represents variability in normalized intensities (0-1 scale), not raw intensities
+    - **RMSD Analysis (CIUSuite/ORIGAMI style):**
+      - **Overall RMSD**: Single value quantifying global difference across entire fingerprint
+      - **RMSD_CV**: RMSD at each collision voltage, showing local variability (more sensitive to voltage-specific differences)
+      - RMSD_CV plot helps identify voltage regions with consistent vs variable unfolding behavior
+      - Useful for day-to-day comparisons, batch-to-batch analysis, and detecting subtle conformational changes
     - **For ORIGAMI format:** Each file's voltages are extracted independently from its range filenames
     - **Common voltage grid:** All unique voltages across replicates are combined into a single grid
     - **Interpolation:** Each replicate is interpolated to match the common voltage and CCS grids
-    - Displays both the mean intensity heatmap and standard deviation heatmap
+    - Displays mean intensity heatmap, standard deviation heatmap, and RMSD_CV plot
     - Useful for assessing measurement reproducibility across different experiments
     - Requires at least 2 replicate files
     - **Important:** For ORIGAMI replicates with different voltage ranges, all data is interpolated to cover the full range
@@ -2285,6 +2911,9 @@ with st.expander("❓Help"):
     - Drift times should be in **seconds**
     - Multiple charge states supported
     - Rows with error ≥ CCS value are automatically removed
+    - **In replicate mode:** Each replicate gets its own calibration file uploaded in dedicated sections
+      - This accounts for different calibrations on different days
+      - Files are automatically paired by replicate number (no manual ordering needed)
     
     **TWIMExtract File:**
     
@@ -2302,17 +2931,21 @@ with st.expander("❓Help"):
     - Each column corresponds to a collision voltage extracted from the range file name
     
     ### Processing Workflow:
-    1. **File Upload**: Select calibration and TWIMExtract files (single or multiple replicates)
+    1. **File Upload**: 
+       - **Single file mode:** Upload one calibration + one TWIMExtract file
+       - **Replicate mode:** Specify number of replicates, then upload calibration + TWIMExtract for each replicate in dedicated sections
+       - Files are automatically paired by replicate number
     2. **Replicate Processing**: (If enabled) Load and interpolate all replicates to common grid
     3. **Charge State Selection**: Choose charge state for analysis
-    4. **CCS Conversion**: Convert drift times to CCS values using calibration
+    4. **CCS Conversion**: Convert drift times to CCS values using calibration (each replicate uses its own calibration)
     5. **Data Sorting**: Sort CCS values in ascending order
     6. **Duplicate Removal**: Remove duplicate CCS or TrapCV values
-    7. **Replicate Averaging**: (If enabled) Compute mean and std across replicates
-    8. **CV Slice Normalisation**: (If enabled) Normalise each CV slice to maximum intensity of 1
-    9. **2D Interpolation**: (If enabled) Add interpolated datapoints for smoother visualization
-    10. **Smoothing**: (If enabled) Apply Gaussian or Savitzky-Golay smoothing
-    11. **CIU50 Analysis**: (If enabled) Extract modal CCS, fit sigmoids, and calculate transition voltages
+    7. **CV Slice Normalisation**: (If enabled in replicate mode) Normalise each replicate's CV slices individually BEFORE averaging
+    8. **Replicate Averaging**: (If enabled) Compute mean and std across (normalized) replicates
+    9. **CV Slice Normalisation**: (If enabled in single-file mode) Normalise each CV slice to maximum intensity of 1
+    10. **2D Interpolation**: (If enabled) Add interpolated datapoints for smoother visualization
+    11. **Smoothing**: (If enabled) Apply Gaussian or Savitzky-Golay smoothing
+    12. **CIU50 Analysis**: (If enabled) Extract modal CCS, fit sigmoids, and calculate transition voltages
     
     ### CIU50 Analysis Tips:
     - Define CCS ranges that represent each conformer state
